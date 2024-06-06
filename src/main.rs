@@ -7,27 +7,59 @@ use std::env;
 
 #[allow(dead_code)]
 fn decode_bencoded_value(encoded_value: &str) -> serde_json::Value {
-    decode_from_position(encoded_value, 0)
+    //TODO: Return a Result, rather than use unwrap
+    //TODO: Handle the case when not all of the encoded_value input has been read
+    decode_bencoded_at_position(&encoded_value.chars().collect(), 0).0.unwrap()
 }
 
-fn decode_from_position(encoded_value: &str, position: usize) -> serde_json::Value {
-    // If encoded_value starts with a digit, it's a number
-    let encoded_value_part = &encoded_value[position..];
-    let next_symbol = encoded_value_part[position..].chars().next().unwrap();
+fn decode_bencoded_at_position(input: &Vec<char>, position: usize) -> (Option<serde_json::Value>, usize) {
+    let mut current_position: usize = position;
+    let mut next_symbol = input[current_position];
     if next_symbol.is_digit(10) {
-        // Example: "5:hello" -> "hello"
-        let colon_index = encoded_value_part.find(':').unwrap();
-        let number_string = &encoded_value_part[..colon_index];
-        let number = number_string.parse::<i64>().unwrap();
-        let string = &encoded_value_part[colon_index + 1..colon_index + 1 + number as usize];
-        json!(string.to_string())
+        let mut number_chars: Vec<char> = Vec::new();
+        while next_symbol != ':' {
+            number_chars.push(next_symbol);
+            current_position += 1;
+            next_symbol = input[current_position];
+        }
+        current_position += 1;
+        let string_value_length_input: String = number_chars.into_iter().collect();
+        let string_value_length = string_value_length_input.parse::<usize>().unwrap();
+        let string_value: String = input[current_position..current_position + string_value_length].into_iter().collect();
+
+        (Some(json!(string_value)), current_position + string_value_length)
     } else if next_symbol == 'i' {
-        let end_index = encoded_value_part.find('e').unwrap();
-        let input_string = &encoded_value_part[position + 1..end_index];
-        let number: i64 = input_string.parse().unwrap();
-        json!(number)
+        current_position += 1;
+        next_symbol = input[current_position];
+        let mut number_chars: Vec<char> = Vec::new();
+        while next_symbol != 'e' {
+            number_chars.push(next_symbol);
+            current_position += 1;
+            next_symbol = input[current_position];
+        }
+        let number_input: String = number_chars.into_iter().collect();
+        let number: i64 = number_input.parse::<i64>().unwrap();
+        (Some(json!(number)), current_position + 1)
+    } else if next_symbol == 'e' {
+        (None, position + 1)
+    } else if next_symbol == 'l' {
+        let mut current_position: usize = position + 1;
+
+        let mut array_values: Vec<serde_json::Value> = Vec::new();
+        let mut decoded = decode_bencoded_at_position(input, current_position);
+        let mut current_decoded_value: Option<serde_json::Value> = decoded.0;
+        current_position = decoded.1;
+
+        while current_decoded_value.is_some() {
+            array_values.push(current_decoded_value.unwrap());
+            decoded = decode_bencoded_at_position(input, current_position);
+            current_decoded_value = decoded.0;
+            current_position = decoded.1;
+        }
+        (Some(serde_json::Value::Array(array_values)), current_position)
     } else {
-        panic!("Unhandled encoded value: {}", encoded_value_part)
+        let unparsed_input: String = input[position..].into_iter().collect();
+        panic!("Unhandled encoded value: {}", unparsed_input)
     }
 }
 
@@ -58,5 +90,10 @@ mod tests {
     #[test]
     fn decode_bencoded_integers() {
         assert_eq!(decode_bencoded_value("i52e"), json!(52));
+    }
+
+    #[test]
+    fn decode_bencoded_lists() {
+        assert_eq!(decode_bencoded_value("l5:helloi52ee"), json!(["hello", 52]));
     }
 }
