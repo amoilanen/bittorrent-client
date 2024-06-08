@@ -1,5 +1,6 @@
 use serde_json;
 use serde_json::json;
+use std::collections::HashMap;
 use std::env;
 
 // Available if you need it!
@@ -39,24 +40,46 @@ fn decode_bencoded_at_position(input: &Vec<char>, position: usize) -> (Option<se
         }
         let number_input: String = number_chars.into_iter().collect();
         let number: i64 = number_input.parse::<i64>().unwrap();
-        (Some(json!(number)), current_position + 1)
-    } else if next_symbol == 'e' {
-        (None, position + 1)
-    } else if next_symbol == 'l' {
+        (Some(json!(number)), current_position + 1) // skip the 'e' symbol
+    } else if next_symbol == 'd' {
         let mut current_position: usize = position + 1;
+        let mut object: HashMap<String, serde_json::Value> = HashMap::new();
 
-        let mut array_values: Vec<serde_json::Value> = Vec::new();
-        let mut decoded = decode_bencoded_at_position(input, current_position);
-        let mut current_decoded_value: Option<serde_json::Value> = decoded.0;
-        current_position = decoded.1;
-
-        while current_decoded_value.is_some() {
-            array_values.push(current_decoded_value.unwrap());
-            decoded = decode_bencoded_at_position(input, current_position);
-            current_decoded_value = decoded.0;
-            current_position = decoded.1;
+        while input[current_position] != 'e' && current_position < input.len() {
+            let (maybe_key, new_position) = decode_bencoded_at_position(input, current_position);
+            current_position = new_position;
+            if input[current_position] != 'e' {
+                if let Some(key) = maybe_key {
+                    let (maybe_value, new_position) = decode_bencoded_at_position(input, current_position);
+                    current_position = new_position;
+                    if let Some(value) = maybe_value {
+                        match key {
+                            serde_json::Value::Number(key_number) => object.insert(key_number.to_string(), value),
+                            serde_json::Value::String(key_string) => object.insert(key_string, value),
+                            _ => None,
+                        };
+                    }
+                }
+            }
         }
-        (Some(serde_json::Value::Array(array_values)), current_position)
+        if input[current_position] != 'e' {
+            panic!("Malformed input '{:?}' around position {:?}", input, current_position);
+        }
+        (Some(json!(object)), current_position + 1) // skip the 'e' symbol
+    } else if next_symbol == 'l' {
+        let mut array_values: Vec<serde_json::Value> = Vec::new();
+        let mut current_position: usize = position + 1;
+        while input[current_position] != 'e' && current_position < input.len() {
+            let (current_decoded_value, updated_position) = decode_bencoded_at_position(input, current_position);
+            current_position = updated_position;
+            if current_decoded_value.is_some() {
+                array_values.push(current_decoded_value.unwrap());
+            }
+        }
+        if input[current_position] != 'e' {
+            panic!("Malformed input '{:?}' around position {:?}", input, current_position);
+        }
+        (Some(serde_json::Value::Array(array_values)), current_position + 1) // skip the 'e' symbol
     } else {
         let unparsed_input: String = input[position..].into_iter().collect();
         panic!("Unhandled encoded value: {}", unparsed_input)
@@ -95,5 +118,50 @@ mod tests {
     #[test]
     fn decode_bencoded_lists() {
         assert_eq!(decode_bencoded_value("l5:helloi52ee"), json!(["hello", 52]));
+    }
+
+    #[test]
+    fn decode_bencoded_dictionary() {
+        assert_eq!(decode_bencoded_value("d3:foo3:bar5:helloi52ee"), json!({
+            "foo": "bar",
+            "hello": 52
+        }));
+    }
+
+    #[test]
+    fn decode_empty_bencoded_dictionary() {
+        assert_eq!(decode_bencoded_value("de"), json!({}));
+    }
+
+    #[test]
+    fn decode_bencoded_dictionary_which_misses_value() {
+        assert_eq!(decode_bencoded_value("d3:foo3:bar5:helloe"), json!({
+            "foo": "bar"
+        }));
+    }
+
+    #[test]
+    fn decode_bencoded_nested_object() {
+        assert_eq!(decode_bencoded_value("d10:inner_dictd4:key16:value14:key2i42eee"), json!({
+            "inner_dict": {
+                "key1":"value1",
+                "key2":42
+            }
+        }));
+    }
+
+    #[test]
+    fn decode_bencoded_objects_in_an_array() {
+        assert_eq!(decode_bencoded_value("ld4:key16:value1ed4:key26:value2ed4:key36:value3ee"), json!([
+            {
+                "key1": "value1"
+            },
+            {
+                "key2": "value2"
+            },
+            {
+                "key3": "value3"
+            }
+        ]));
     }
 }
