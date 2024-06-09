@@ -3,13 +3,44 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::hash::Hash;
 
-
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub enum Value {
     List(Vec<Value>),
     Number(i64),
     String(Vec<u8>),
     Object(Vec<(Value, Value)>)
+}
+
+impl Value {
+    pub fn get_by_key(&self, key: &str) -> Option<&Value> {
+        let wrapped_key = Value::String(key.chars().into_iter().map(|x| x as u8).collect());
+        match self {
+            Value::Object(values) => {
+                values.iter().find(|(key, _)|
+                    wrapped_key == *key
+                ).map(|(_, value)| value)
+            },
+            _ => None
+        }
+    }
+
+    pub fn as_string(&self) -> Option<String> {
+        match self {
+            Value::String(bytes) => {
+                String::from_utf8(bytes.clone()).ok()
+            },
+            _ => None
+        }
+    }
+
+    pub fn as_number(&self) -> Option<i64> {
+        match self {
+            Value::Number(value) => {
+                Some(*value)
+            },
+            _ => None
+        }
+    }
 }
 
 impl Value {
@@ -41,11 +72,15 @@ impl Value {
     }
 }
 
-#[allow(dead_code)]
-pub(crate) fn decode_bencoded_from_str(encoded_value: &str) -> Value {
+
+pub(crate) fn decode_bencoded_from_str(input: &str) -> Result<Value, std::io::Error> {
+    decode_bencoded(&input.chars().collect())
+}
+
+pub(crate) fn decode_bencoded(input: &Vec<char>) -> Result<Value, std::io::Error> {
     //TODO: Return a Result, rather than use unwrap
     //TODO: Handle the case when not all of the encoded_value input has been read
-    decode_bencoded_at_position(&encoded_value.chars().collect(), 0).0.unwrap()
+    decode_bencoded_at_position(input, 0).0.ok_or(std::io::Error::new(std::io::ErrorKind::Other, "Could not decode input"))
 }
 
 fn decode_bencoded_at_position(input: &Vec<char>, position: usize) -> (Option<Value>, usize) {
@@ -144,22 +179,22 @@ mod tests {
 
     #[test]
     fn decode_bencoded_string() {
-        assert_eq!(decode_bencoded_from_str("4:spam").as_json(), json!("spam".to_string()));
+        assert_eq!(decode_bencoded_from_str("4:spam").unwrap().as_json(), json!("spam".to_string()));
     }
 
     #[test]
     fn decode_bencoded_integers() {
-        assert_eq!(decode_bencoded_from_str("i52e").as_json(), json!(52));
+        assert_eq!(decode_bencoded_from_str("i52e").unwrap().as_json(), json!(52));
     }
 
     #[test]
     fn decode_bencoded_lists() {
-        assert_eq!(decode_bencoded_from_str("l5:helloi52ee").as_json(), json!(["hello", 52]));
+        assert_eq!(decode_bencoded_from_str("l5:helloi52ee").unwrap().as_json(), json!(["hello", 52]));
     }
 
     #[test]
     fn decode_bencoded_dictionary() {
-        assert_eq!(decode_bencoded_from_str("d3:foo3:bar5:helloi52ee").as_json(), json!({
+        assert_eq!(decode_bencoded_from_str("d3:foo3:bar5:helloi52ee").unwrap().as_json(), json!({
             "foo": "bar",
             "hello": 52
         }));
@@ -167,19 +202,19 @@ mod tests {
 
     #[test]
     fn decode_empty_bencoded_dictionary() {
-        assert_eq!(decode_bencoded_from_str("de").as_json(), json!({}));
+        assert_eq!(decode_bencoded_from_str("de").unwrap().as_json(), json!({}));
     }
 
     #[test]
     fn decode_bencoded_dictionary_which_misses_value() {
-        assert_eq!(decode_bencoded_from_str("d3:foo3:bar5:helloe").as_json(), json!({
+        assert_eq!(decode_bencoded_from_str("d3:foo3:bar5:helloe").unwrap().as_json(), json!({
             "foo": "bar"
         }));
     }
 
     #[test]
     fn decode_bencoded_nested_object() {
-        assert_eq!(decode_bencoded_from_str("d10:inner_dictd4:key16:value14:key2i42eee").as_json(), json!({
+        assert_eq!(decode_bencoded_from_str("d10:inner_dictd4:key16:value14:key2i42eee").unwrap().as_json(), json!({
             "inner_dict": {
                 "key1":"value1",
                 "key2":42
@@ -189,7 +224,7 @@ mod tests {
 
     #[test]
     fn decode_bencoded_objects_in_an_array() {
-        assert_eq!(decode_bencoded_from_str("ld4:key16:value1ed4:key26:value2ed4:key36:value3ee").as_json(), json!([
+        assert_eq!(decode_bencoded_from_str("ld4:key16:value1ed4:key26:value2ed4:key36:value3ee").unwrap().as_json(), json!([
             {
                 "key1": "value1"
             },
