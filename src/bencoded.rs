@@ -2,6 +2,7 @@ use serde_json;
 use serde_json::json;
 use std::collections::HashMap;
 use std::hash::Hash;
+use core::fmt::Debug;
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub enum Value {
@@ -16,9 +17,9 @@ impl Value {
         let wrapped_key = Value::String(key.chars().into_iter().map(|x| x as u8).collect());
         match self {
             Value::Object(values) => {
-                values.iter().find(|(key, _)|
-                    wrapped_key == *key
-                ).map(|(_, value)| value)
+                values.iter().find(|(stored_key, _)| {
+                    wrapped_key == *stored_key
+                }).map(|(_, value)| value)
             },
             _ => None
         }
@@ -33,11 +34,28 @@ impl Value {
         }
     }
 
+    pub fn as_bytes(&self) -> Option<Vec<u8>> {
+        match self {
+            Value::String(bytes) => {
+                Some(bytes.clone())
+            },
+            _ => None
+        }
+    }
+
     pub fn as_number(&self) -> Option<i64> {
         match self {
             Value::Number(value) => {
                 Some(*value)
             },
+            _ => None
+        }
+    }
+
+    pub fn as_values(&self) -> Option<&Vec<Value>> {
+        match self {
+            Value::List(values) =>
+                Some(values),
             _ => None
         }
     }
