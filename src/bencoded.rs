@@ -3,6 +3,7 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::hash::Hash;
 use core::fmt::Debug;
+use anyhow::Result;
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub enum Value {
@@ -13,7 +14,7 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn get_by_key(&self, key: &str) -> Option<&Value> {
+    pub fn get_optional_by_key(&self, key: &str) -> Option<&Value> {
         let wrapped_key = Value::String(key.chars().into_iter().map(|x| x as u8).collect());
         match self {
             Value::Object(values) => {
@@ -25,38 +26,46 @@ impl Value {
         }
     }
 
-    pub fn as_string(&self) -> Option<String> {
-        match self {
-            Value::String(bytes) => {
-                String::from_utf8(bytes.clone()).ok()
+    pub fn get_by_key(&self, key: &str) -> Result<&Value, std::io::Error> {
+        match self.get_optional_by_key(key) {
+            Some(value) => {
+                Ok(value)
             },
-            _ => None
+            None => Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Did not find key {:?} in {:?}", key, self)))
         }
     }
 
-    pub fn as_bytes(&self) -> Option<Vec<u8>> {
+    pub fn as_string(&self) -> Result<String, std::io::Error> {
         match self {
             Value::String(bytes) => {
-                Some(bytes.clone())
+                String::from_utf8(bytes.clone()).map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))
             },
-            _ => None
+            _ => Err(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?} cannot be cast to String", self)))
         }
     }
 
-    pub fn as_number(&self) -> Option<i64> {
+    pub fn as_bytes(&self) -> Result<Vec<u8>, std::io::Error> {
+        match self {
+            Value::String(bytes) => {
+                Ok(bytes.clone())
+            },
+            _ => Err(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?} cannot be cast to Vec<u8>", self)))
+        }
+    }
+
+    pub fn as_number(&self) -> Result<i64, std::io::Error> {
         match self {
             Value::Number(value) => {
-                Some(*value)
+                Ok(*value)
             },
-            _ => None
+            _ => Err(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?} cannot be cast to i64", self)))
         }
     }
 
-    pub fn as_values(&self) -> Option<&Vec<Value>> {
+    pub fn as_values(&self) -> Result<&Vec<Value>, std::io::Error> {
         match self {
-            Value::List(values) =>
-                Some(values),
-            _ => None
+            Value::List(values) => Ok(values),
+            _ => Err(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?} cannot be cast to a Vec<Value>", self)))
         }
     }
 }
