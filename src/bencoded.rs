@@ -147,7 +147,7 @@ fn decode_dictionary(input: &Vec<char>, position: usize) -> (Option<Value>, usiz
     let mut current_position: usize = position + 1; // skip 'd'
     let mut object: HashMap<Value, Value> = HashMap::new();
 
-    while input[current_position] != 'e' && current_position < input.len() {
+    while current_position < input.len() && input[current_position] != 'e' {
         let (maybe_key, new_position) = decode_bencoded_at_position(input, current_position);
         current_position = new_position;
         if input[current_position] != 'e' {
