@@ -23,6 +23,7 @@ fn main() -> Result<(), anyhow::Error> {
         //println!("Torrent file: {:?}", torrent);
         println!("Tracker URL: {}", torrent.announce);
         println!("Length: {}", torrent.info.length.unwrap_or(0));
+        println!("Info Hash: {}", torrent.info.compute_hash());
         Ok(())
     } else {
         println!("unknown command: {}", args[1]);

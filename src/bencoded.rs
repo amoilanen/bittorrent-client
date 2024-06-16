@@ -123,16 +123,6 @@ impl BencodeEncoding for Vec<u8> {
   }
 }
 
-pub(crate) fn encode_bytes(bytes: &[u8]) -> Vec<u8> {
-    let mut encoded = format!("{}:", bytes.len()).as_bytes().to_owned();
-    encoded.extend_from_slice(bytes);
-    encoded
-}
-
-pub(crate) fn encode_number(number: &i64) -> Vec<u8> {
-    format!("i{}e", number).as_bytes().to_owned()
-}
-
 pub(crate) fn decode_bencoded_from_str(input: &str) -> Result<Value, std::io::Error> {
     decode_bencoded(&input.chars().collect())
 }

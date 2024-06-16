@@ -1,5 +1,5 @@
 use anyhow::Result;
-use crate::bencoded;
+use sha1::{Sha1, Digest};
 use crate::bencoded::BencodeEncoding;
 
 #[derive(Debug, PartialEq)]
@@ -19,7 +19,7 @@ pub struct TorrentInfo {
 
 impl TorrentInfo {
 
-    fn bencode(&self) -> Vec<u8> {
+    pub(crate) fn bencode(&self) -> Vec<u8> {
         let mut bencoded: Vec<u8> = Vec::new();
         bencoded.push(b'd');
         if let Some(length) = self.length {
@@ -34,6 +34,13 @@ impl TorrentInfo {
         bencoded.encode_bytes(&self.pieces);
         bencoded.push(b'e');
         bencoded
+    }
+
+    pub(crate) fn compute_hash(&self) -> String {
+        let mut hasher = Sha1::new();
+        hasher.update(self.bencode());
+        let result = hasher.finalize();
+        format!("{:x}", result)
     }
 }
 
@@ -109,4 +116,6 @@ mod tests {
         let expected_torrent_info = "d6:lengthi92063e4:name10:sample.txt12:piece lengthi32768e6:pieces20:00000000000000000000e";
         assert_eq!(String::from_utf8(torrent.info.bencode()).unwrap(), expected_torrent_info)
     }
+
+    //TODO: Add test for compute_hash
 }
