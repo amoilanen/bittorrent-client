@@ -99,6 +99,39 @@ impl Value {
     }
 }
 
+pub trait BencodeEncoding {
+    fn encode_str(&mut self, str: &str) {
+        self.encode_bytes(str.as_bytes());
+    }
+    fn encode_bytes(&mut self, bytes: &[u8]);
+    fn encode_usize(&mut self, number: &usize) {
+        self.encode_i64(&(*number as i64));
+    }
+    fn encode_i64(&mut self, number: &i64);
+}
+
+impl BencodeEncoding for Vec<u8> {
+  fn encode_bytes(&mut self, bytes: &[u8]) {
+    self.extend_from_slice(bytes.len().to_string().as_bytes());
+    self.push(b':');
+    self.extend_from_slice(bytes);
+  }
+  fn encode_i64(&mut self, number: &i64) {
+    self.push(b'i');
+    self.extend_from_slice(number.to_string().as_bytes());
+    self.push(b'e');
+  }
+}
+
+pub(crate) fn encode_bytes(bytes: &[u8]) -> Vec<u8> {
+    let mut encoded = format!("{}:", bytes.len()).as_bytes().to_owned();
+    encoded.extend_from_slice(bytes);
+    encoded
+}
+
+pub(crate) fn encode_number(number: &i64) -> Vec<u8> {
+    format!("i{}e", number).as_bytes().to_owned()
+}
 
 pub(crate) fn decode_bencoded_from_str(input: &str) -> Result<Value, std::io::Error> {
     decode_bencoded(&input.chars().collect())

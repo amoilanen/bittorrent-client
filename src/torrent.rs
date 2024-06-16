@@ -1,4 +1,6 @@
 use anyhow::Result;
+use crate::bencoded;
+use crate::bencoded::BencodeEncoding;
 
 #[derive(Debug, PartialEq)]
 pub struct TorrentFileInfo {
@@ -13,6 +15,26 @@ pub struct TorrentInfo {
     pub piece_length: usize,
     pub length: Option<usize>,
     pub files: Option<Vec<TorrentFileInfo>>,
+}
+
+impl TorrentInfo {
+
+    fn bencode(&self) -> Vec<u8> {
+        let mut bencoded: Vec<u8> = Vec::new();
+        bencoded.push(b'd');
+        if let Some(length) = self.length {
+            bencoded.encode_str("length");
+            bencoded.encode_usize(&length);
+        }
+        bencoded.encode_str("name");
+        bencoded.encode_str(&self.name);
+        bencoded.encode_str("piece length");
+        bencoded.encode_usize(&self.piece_length);
+        bencoded.encode_str("pieces");
+        bencoded.encode_bytes(&self.pieces);
+        bencoded.push(b'e');
+        bencoded
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -78,5 +100,13 @@ mod tests {
         assert_eq!(torrent.info.piece_length, 32768);
         assert_eq!(torrent.info.files, None);
         assert_eq!(torrent.info.pieces, "00000000000000000000".as_bytes());
+    }
+
+    #[test]
+    fn bencode_torrent_info() {
+        let input = "d8:announce55:http://bittorrent-test-tracker.codecrafters.io/announce10:created by13:mktorrent 1.14:infod6:lengthi92063e4:name10:sample.txt12:piece lengthi32768e6:pieces20:00000000000000000000ee";
+        let torrent = Torrent::from_bytes(&input.as_bytes().to_vec()).unwrap();
+        let expected_torrent_info = "d6:lengthi92063e4:name10:sample.txt12:piece lengthi32768e6:pieces20:00000000000000000000e";
+        assert_eq!(String::from_utf8(torrent.info.bencode()).unwrap(), expected_torrent_info)
     }
 }
