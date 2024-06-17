@@ -18,6 +18,11 @@ pub struct TorrentInfo {
 }
 
 impl TorrentInfo {
+    const PIECE_HASH_SIZE: usize = 20;
+
+    pub(crate) fn piece_hashes(&self) -> Vec<&[u8]> {
+        self.pieces.chunks(TorrentInfo::PIECE_HASH_SIZE).collect()
+    }
 
     pub(crate) fn bencode(&self) -> Vec<u8> {
         let mut bencoded: Vec<u8> = Vec::new();

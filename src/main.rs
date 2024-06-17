@@ -3,6 +3,7 @@ use anyhow::Result;
 
 mod bencoded;
 mod torrent;
+mod format;
 
 // Usage: your_bittorrent.sh decode "<encoded_value>"
 fn main() -> Result<(), anyhow::Error> {
@@ -24,6 +25,11 @@ fn main() -> Result<(), anyhow::Error> {
         println!("Tracker URL: {}", torrent.announce);
         println!("Length: {}", torrent.info.length.unwrap_or(0));
         println!("Info Hash: {}", torrent.info.compute_hash());
+        println!("Piece Length: {}", torrent.info.piece_length);
+        println!("Piece Hashes:");
+        for piece_hash in torrent.info.piece_hashes() {
+            println!("{}", format::format_as_hex_string(piece_hash))
+        }
         Ok(())
     } else {
         println!("unknown command: {}", args[1]);
