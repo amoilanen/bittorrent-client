@@ -117,5 +117,10 @@ mod tests {
         assert_eq!(String::from_utf8(torrent.info.bencode()).unwrap(), expected_torrent_info)
     }
 
-    //TODO: Add test for compute_hash
+    #[test]
+    fn compute_hash() {
+        let input = "d8:announce55:http://bittorrent-test-tracker.codecrafters.io/announce10:created by13:mktorrent 1.14:infod6:lengthi92063e4:name10:sample.txt12:piece lengthi32768e6:pieces20:00000000000000000000ee";
+        let torrent = Torrent::from_bytes(&input.as_bytes().to_vec()).unwrap();
+        assert_eq!(torrent.info.compute_hash(), "e68d67c4b84274f741d7293fc0657102a36e7e3b");
+    }
 }
