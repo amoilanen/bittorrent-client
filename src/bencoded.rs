@@ -127,6 +127,11 @@ pub(crate) fn decode_bencoded_from_str(input: &str) -> Result<Value, std::io::Er
     decode_bencoded(&input.chars().collect())
 }
 
+pub(crate) fn decode_bencoded_from_bytes(input: &Vec<u8>) -> Result<Value, std::io::Error> {
+    let chars = input.iter().map(|b| *b as char).collect::<Vec<char>>();
+    decode_bencoded(&chars)
+}
+
 pub(crate) fn decode_bencoded(input: &Vec<char>) -> Result<Value, std::io::Error> {
     //TODO: Return a Result, rather than use unwrap
     //TODO: Handle the case when not all of the encoded_value input has been read
