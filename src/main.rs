@@ -74,11 +74,11 @@ fn main() -> Result<(), anyhow::Error> {
         let current_peer_handshake = peer::PeerHandshake {
             info_hash: torrent_hash,
             peer: peer::Peer {
-                id: current_peer_id
+                id: current_peer_id.as_bytes().to_vec()
             }
         };
         let other_peer_handshake = peer::Peer::handshake(&other_peer_address, &current_peer_handshake)?;
-        println!("Peer ID: {}", other_peer_handshake.peer.id);
+        println!("Peer ID: {}", format::format_as_hex_string(&other_peer_handshake.peer.id));
         Ok(())
     } else {
         println!("unknown command: {}", args[1]);

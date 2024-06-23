@@ -3,7 +3,6 @@ use std::io::Write;
 use std::net::IpAddr;
 use std::net::TcpStream;
 use std::str::FromStr;
-use anyhow::Error;
 use rand::Rng;
 
 fn generate_random_number_string(length: usize) -> String {
@@ -34,7 +33,7 @@ impl PeerAddress {
 }
 
 pub(crate) struct Peer {
-    pub(crate) id: String
+    pub(crate) id: Vec<u8>
 }
 
 impl Peer {
@@ -45,8 +44,8 @@ impl Peer {
         let mut response_buffer: [u8; 68] = [0; 68]; //1 + 19 + 8 + 20 + 20
         stream.read(&mut response_buffer)?;
 
-        let info_hash: Vec<u8> = response_buffer[28..49].to_vec();
-        let peer_id = String::from_utf8(response_buffer[49..].to_vec())?;
+        let info_hash: Vec<u8> = response_buffer[28..48].to_vec();
+        let peer_id = response_buffer[48..].to_vec();
         Ok(PeerHandshake {
             info_hash,
             peer: Peer { id: peer_id }
@@ -66,7 +65,7 @@ impl PeerHandshake {
         message.extend_from_slice("BitTorrent protocol".as_bytes());
         message.extend_from_slice(&[0; 8]);
         message.extend_from_slice(&self.info_hash);
-        message.extend_from_slice(&self.peer.id.as_bytes());
+        message.extend_from_slice(&self.peer.id);
         message
     }
 }
