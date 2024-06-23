@@ -1,5 +1,6 @@
 use std::env;
 use anyhow::Result;
+use peer::PeerAddress;
 
 mod bencoded;
 mod torrent;
@@ -36,20 +37,19 @@ fn main() -> Result<(), anyhow::Error> {
         }
         Ok(())
     } else if command == "peers" {
-        //
         let torrent_file_path = &args[2];
         //let torrent_file_path = "sample.torrent";
         //println!("torrent_file_path: {}", torrent_file_path);
         let torrent_file_bytes = std::fs::read(torrent_file_path)?;
         let torrent = torrent::Torrent::from_bytes(&torrent_file_bytes)?;
 
-        let peer_id = peer::random_peer_id();
+        let current_peer_id = peer::random_peer_id();
         let torrent_hash = torrent.info.compute_hash();
         let port = 6881;
         let tracker = tracker::Tracker { url: torrent.announce };
 
         let request = tracker::TrackerRequest {
-            peer_id,
+            peer_id: current_peer_id,
             info_hash: url::url_encode_bytes(&torrent_hash),
             port,
             uploaded: 0,
@@ -59,8 +59,26 @@ fn main() -> Result<(), anyhow::Error> {
         };
         let response = tracker.get(&request)?;
         for peer in response.get_peer_addresses()? {
-            println!("{}:{}", peer.0, peer.1)
+            println!("{}:{}", peer.address, peer.port)
         }
+        Ok(())
+    } else if command == "handshake" {
+        let torrent_file_path = &args[2];
+        let other_peer_address = PeerAddress::from_str(&args[3])?;
+        let torrent_file_bytes = std::fs::read(torrent_file_path)?;
+        let torrent = torrent::Torrent::from_bytes(&torrent_file_bytes)?;
+
+        let current_peer_id = peer::random_peer_id();
+        let torrent_hash = torrent.info.compute_hash();
+
+        let current_peer_handshake = peer::PeerHandshake {
+            info_hash: torrent_hash,
+            peer: peer::Peer {
+                id: current_peer_id
+            }
+        };
+        let other_peer_handshake = peer::Peer::handshake(&other_peer_address, &current_peer_handshake)?;
+        println!("Peer ID: {}", other_peer_handshake.peer.id);
         Ok(())
     } else {
         println!("unknown command: {}", args[1]);

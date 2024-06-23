@@ -65,7 +65,7 @@ impl Torrent {
         let piece_length = info.get_by_key("piece length")?.as_number()? as usize;
         let length: Option<usize> = info.get_optional_by_key("length").and_then(|x| x.as_number().ok()).map(|x| x as usize);
         let mut torrent_file_infos: Vec<TorrentFileInfo> = Vec::new();
-        if let Some(files) = info.get_optional_by_key("files").and_then(|x| x.as_values().ok()) { 
+        if let Some(files) = info.get_optional_by_key("files").and_then(|x| x.as_values().ok()) {
             for file in files {
                 let file_length = file.get_by_key("length")?.as_number()? as usize;
                 let mut path_parts: Vec<String> = Vec::new();

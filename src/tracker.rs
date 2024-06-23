@@ -1,5 +1,6 @@
 use std::net::{ Ipv4Addr, IpAddr };
 use crate::bencoded;
+use crate::peer::PeerAddress;
 
 pub(crate) struct TrackerResponse {
     interval: u32,
@@ -21,12 +22,12 @@ pub(crate) struct TrackerRequest {
 }
 
 impl TrackerResponse {
-    pub(crate) fn get_peer_addresses(&self) -> Result<Vec<(IpAddr, u16)>, anyhow::Error> {
+    pub(crate) fn get_peer_addresses(&self) -> Result<Vec<PeerAddress>, anyhow::Error> {
         if self.peers.len() % 6 == 0 {
             Ok(self.peers.chunks(6).into_iter().map(|peer| {
                 let address = IpAddr::V4(Ipv4Addr::new(peer[0], peer[1], peer[2], peer[3]));
                 let port = (peer[5] as u16) | (peer[4] as u16) << 8;
-                (address, port)
+                PeerAddress { address, port }
             }).collect())
         } else {
             Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Peers field size is not a multiple of 6, {:?}", self.peers)).into())
