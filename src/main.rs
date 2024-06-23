@@ -36,15 +36,29 @@ fn main() -> Result<(), anyhow::Error> {
         }
         Ok(())
     } else if command == "peers" {
+        //
         let torrent_file_path = &args[2];
         //let torrent_file_path = "sample.torrent";
         //println!("torrent_file_path: {}", torrent_file_path);
         let torrent_file_bytes = std::fs::read(torrent_file_path)?;
         let torrent = torrent::Torrent::from_bytes(&torrent_file_bytes)?;
+
         let peer_id = peer::random_peer_id();
+        let torrent_hash = torrent.info.compute_hash();
         let port = 6881;
-        let tracker_response = tracker::get_info_from_tracker(&peer_id, &port, &torrent)?;
-        for peer in tracker_response.get_peer_addresses()? {
+        let tracker = tracker::Tracker { url: torrent.announce };
+
+        let request = tracker::TrackerRequest {
+            peer_id,
+            info_hash: url::url_encode_bytes(&torrent_hash),
+            port,
+            uploaded: 0,
+            downloaded: 0,
+            left: torrent.info.length.unwrap_or(0) as u64,
+            compact: true
+        };
+        let response = tracker.get(&request)?;
+        for peer in response.get_peer_addresses()? {
             println!("{}:{}", peer.0, peer.1)
         }
         Ok(())

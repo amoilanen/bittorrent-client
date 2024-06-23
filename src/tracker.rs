@@ -1,9 +1,23 @@
 use std::net::{ Ipv4Addr, IpAddr };
-use crate::{ url, torrent, bencoded };
+use crate::bencoded;
 
 pub(crate) struct TrackerResponse {
     interval: u32,
     peers: Vec<u8>
+}
+
+pub(crate) struct Tracker {
+    pub(crate) url: String
+}
+
+pub(crate) struct TrackerRequest {
+    pub(crate) peer_id: String,
+    pub(crate) info_hash: String,
+    pub(crate) port: usize,
+    pub(crate) uploaded: u64,
+    pub(crate) downloaded: u64,
+    pub(crate) left: u64,
+    pub(crate) compact: bool
 }
 
 impl TrackerResponse {
@@ -20,37 +34,33 @@ impl TrackerResponse {
     }
 }
 
-pub(crate) fn get_info_from_tracker(peer_id: &str, port: &u16, torrent: &torrent::Torrent) -> Result<TrackerResponse, anyhow::Error> {
-    let client = reqwest::blocking::Client::new();
-
-    let url = &torrent.announce;
-    let torrent_hash = torrent.info.compute_hash();
-    let info_hash: String = url::url_encode_bytes(&torrent_hash);
-    //let info_hash: String = format("{}", urlencoding::encode_binary(&torrent_hash));
-    println!("URL encoded info_hash {}", info_hash);
-    let rest_of_params = [
-        ("peer_id", peer_id.to_string()),
-        ("port", port.to_string()),
-        ("uploaded", "0".to_string()),
-        ("downloaded", "0".to_string()),
-        ("left", torrent.info.length.unwrap_or(0).to_string()),
-        ("compact", "1".to_string())
-    ];
-    let url_encoded_rest_of_params = serde_urlencoded::to_string(rest_of_params)?;
-    let url_with_params = format!("{}?{}&info_hash={}", url, url_encoded_rest_of_params, info_hash);
-    let response = client.get(url_with_params)
-        .send()?;
-
-    if response.status().is_success() {
-        let response_chars = response.bytes()?.to_vec();
-        let decoded = bencoded::decode_bencoded_from_bytes(&response_chars)?;
-        let interval = decoded.get_by_key("interval")?.as_number()? as u32;
-        let peers = decoded.get_by_key("peers")?.as_bytes()?;
-        Ok(TrackerResponse {
-            interval,
-            peers
-        })
-    } else {
-        Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Got response {}", &response.status())).into())
+impl Tracker {
+    pub(crate) fn get(&self, request: &TrackerRequest) -> Result<TrackerResponse, anyhow::Error> {
+        let client = reqwest::blocking::Client::new();
+        let rest_of_params = [
+            ("peer_id", request.peer_id.to_string()),
+            ("port", request.port.to_string()),
+            ("uploaded", request.uploaded.to_string()),
+            ("downloaded", request.downloaded.to_string()),
+            ("left", request.left.to_string()),
+            ("compact", (if request.compact { "1" } else { "0" }).to_string())
+        ];
+        let url_encoded_rest_of_params = serde_urlencoded::to_string(rest_of_params)?;
+        let url_with_params = format!("{}?{}&info_hash={}", self.url, url_encoded_rest_of_params, request.info_hash);
+        let response = client.get(url_with_params)
+            .send()?;
+    
+        if response.status().is_success() {
+            let response_chars = response.bytes()?.to_vec();
+            let decoded = bencoded::decode_bencoded_from_bytes(&response_chars)?;
+            let interval = decoded.get_by_key("interval")?.as_number()? as u32;
+            let peers = decoded.get_by_key("peers")?.as_bytes()?;
+            Ok(TrackerResponse {
+                interval,
+                peers
+            })
+        } else {
+            Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Got response {}", &response.status())).into())
+        }
     }
-  }
+}
