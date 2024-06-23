@@ -1,7 +1,6 @@
 use anyhow::Result;
 use sha1::{Sha1, Digest};
 use crate::bencoded::BencodeEncoding;
-use crate::format;
 
 #[derive(Debug, PartialEq)]
 pub struct TorrentFileInfo {
@@ -101,6 +100,7 @@ impl Torrent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::format;
 
     #[test]
     fn read_torrent_from_bytes() {

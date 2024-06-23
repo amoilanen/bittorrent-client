@@ -1,0 +1,6 @@
+-- Support the UDP protocol for the torrent tracker
+-- Show the progress in the console together with the stats
+-- Implement upload functionality
+-- Support multifile torrents
+-- Be able to download from multiple peers
+-- Be able to upload to multiple peers
