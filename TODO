@@ -1,6 +1,12 @@
--- Support the UDP protocol for the torrent tracker
+-- Support the UDP protocol for the torrent tracker https://www.bittorrent.org/beps/bep_0015.html
 -- Show the progress in the console together with the stats
 -- Implement upload functionality
--- Support multifile torrents
 -- Be able to download from multiple peers
 -- Be able to upload to multiple peers
+-- Support multifile torrents
+
+-- Possible to generate a metainfo file (.torrent file) for a given file or directory and given a tracker
+-- Support all the fields including the optional ones from the spec https://www.bittorrent.org/beps/bep_0003.html
+
+-- Test scenario: two peers one of which has first half of the file and the second the second half of the file
+-- Test scenario: one of the peers sends intermittent choke/unchoke messages

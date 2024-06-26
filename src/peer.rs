@@ -17,6 +17,13 @@ pub(crate) fn random_peer_id() -> String {
     generate_random_number_string(20)
 }
 
+pub(crate) enum PeerConnectionState {
+    Initial,
+    Choked,
+    Unchoked
+}
+
+#[derive(Debug)]
 pub(crate) struct PeerAddress {
     pub(crate) address: IpAddr,
     pub(crate) port: u16
@@ -32,12 +39,13 @@ impl PeerAddress {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub(crate) struct Peer {
     pub(crate) id: Vec<u8>
 }
 
 impl Peer {
-    pub(crate) fn handshake(peer_address: &PeerAddress, request: &PeerHandshake) -> Result<PeerHandshake, anyhow::Error> {
+    pub(crate) fn handshake(peer_address: &PeerAddress, request: &PeerHandshake) -> Result<(PeerHandshake, TcpStream), anyhow::Error> {
         let mut stream = TcpStream::connect(format!("{}:{}", peer_address.address.to_string(), peer_address.port.to_string()))?;
         stream.write_all(&request.to_message())?;
 
@@ -46,10 +54,10 @@ impl Peer {
 
         let info_hash: Vec<u8> = response_buffer[28..48].to_vec();
         let peer_id = response_buffer[48..].to_vec();
-        Ok(PeerHandshake {
+        Ok((PeerHandshake {
             info_hash,
             peer: Peer { id: peer_id }
-        })
+        }, stream))
     }
 }
 
