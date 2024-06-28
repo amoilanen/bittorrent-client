@@ -5,6 +5,8 @@
 -- Be able to upload to multiple peers
 -- Support multifile torrents
 
+-- Periodically re-request peers from the tracker when running a long file download: discover the newly connected peers, handle peers dropping the connection
+
 -- Possible to generate a metainfo file (.torrent file) for a given file or directory and given a tracker
 -- Support all the fields including the optional ones from the spec https://www.bittorrent.org/beps/bep_0003.html
 
