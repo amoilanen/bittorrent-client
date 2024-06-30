@@ -1,9 +1,9 @@
-use std::{env, io::Read, net::TcpStream, thread};
+use std::{env, io::Read, thread};
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use anyhow::Result;
 use peer::{ PeerAddress, Peer, PeerConnectionState };
 use std::collections::HashMap;
-use std::time::Duration;
 
 mod bencoded;
 mod torrent;
@@ -112,13 +112,10 @@ fn main() -> Result<(), anyhow::Error> {
             };
             let response = tracker.get(&request)?;
 
-            let mut peer_channels: Arc<Mutex<HashMap<Peer, TcpStream>>> = Arc::new(Mutex::new(HashMap::new()));
             let mut peer_bitfields: Arc<Mutex<HashMap<Peer, Vec<u8>>>>= Arc::new(Mutex::new(HashMap::new()));
             let mut peer_connection_states: Arc<Mutex<HashMap<Peer, PeerConnectionState>>> = Arc::new(Mutex::new(HashMap::new()));
             let mut piece_blocks: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
-
-            let mut peer_channels_hash = peer_channels.lock().unwrap();
-            let mut peer_connection_states_hash = peer_connection_states.lock().unwrap();
+            let mut peer_threads: HashMap<Peer, JoinHandle<i32>> = HashMap::new();
 
             let current_peer_handshake = peer::PeerHandshake {
                 info_hash: torrent_hash,
@@ -127,53 +124,11 @@ fn main() -> Result<(), anyhow::Error> {
                 }
             };
             for other_peer_address in response.get_peer_addresses()? {
-                let (other_peer_handshake, other_peer_stream) = peer::Peer::handshake(&other_peer_address, &current_peer_handshake)?;
-                peer_channels_hash.insert(other_peer_handshake.peer.clone(), other_peer_stream);
-                peer_connection_states_hash.insert(other_peer_handshake.peer.clone(), PeerConnectionState::Initial);
-                println!("Established connection to the peer {:?} peer address {:?}", other_peer_handshake.peer, other_peer_address);
-                let peer_bitfields_pointer = peer_bitfields.clone();
-                let peer = Arc::new(Mutex::new(other_peer_handshake.peer));
-                let stream = Arc::new(Mutex::new(other_peer_stream));
-                thread::spawn(move || {
-                    loop {
-                        //TODO: Implement reading the messages from the peer and also writing messages to the peer
-                        let mut buffer: [u8; 512] = [0; 512];
-                        let mut total_bytes_read: usize = 0;
-                        let mut message_content: Vec<u8> = Vec::new();
-                        let mut message_length_bytes: usize = 0;
-                        let mut message_type: u8 = 0;
-
-                        //Read the contents of the current message
-                        while message_length_bytes == 0 || total_bytes_read < message_length_bytes {
-                            match stream.lock().unwrap().read(&mut buffer) {
-                                Ok(bytes_read) => {
-                                    if total_bytes_read == 0 {
-                                        if bytes_read <= 5 {
-                                            continue;
-                                        }
-                                        message_length_bytes = (buffer[0] as usize) << 24| (buffer[1] as usize) << 16 | (buffer[2] as usize) << 8 | (buffer[4] as usize);
-                                        message_type = buffer[5];
-                                    }
-                                    message_content.extend(buffer[5..bytes_read].to_vec());
-                                    total_bytes_read = total_bytes_read + bytes_read;
-                                },
-                                Err(e) => {
-                                    eprintln!("Failed to read from socket: {}", e);
-                                    break;
-                                }
-                            }
-                        }
-
-                        //"bitfield" message
-                        if message_type == 5 {
-                            println!("Received 'bitfield' message from the peer {:?}", peer.lock().unwrap());
-                            peer_bitfields_pointer.lock().unwrap().insert(peer.lock().unwrap().clone(), message_content);
-                        }
-                    }
-                });
+                let (peer_thread, peer) = connect_to_peer(&current_peer_handshake, &other_peer_address, &mut peer_bitfields, &mut peer_connection_states)?;
+                peer_threads.insert(peer, peer_thread);
             }
-            //TODO: Add double-way communication handlers for every connected peer
-            //TODO: Handle the "bitfield" message from the peer
+            //TODO: Add double-way communication handlers for every connected peer - OK
+            //TODO: Handle the "bitfield" message from the peer - OK
             //TODO: Handle the "choke" message from the peer
             //TODO: Handle the "unchoke" message from the peer
 
@@ -182,10 +137,66 @@ fn main() -> Result<(), anyhow::Error> {
                //--If the piece has not been downloaded correctly/hash mismatches, restart the download
                //--If the piece has been downloaded correctly, stop the download, output the info in the format "Piece 0 downloaded to /tmp/test-piece-0."
             //TODO: Re-factor and extract the function(s) for downloading the piece to the "peer" module
+            for (_, thread) in peer_threads {
+                thread.join().unwrap();
+            }
             Ok(())
         }
     } else {
         println!("unknown command: {}", args[1]);
         Ok(())
     }
+}
+
+fn connect_to_peer(
+        current_peer_handshake: &peer::PeerHandshake,
+        peer_address: &PeerAddress,
+        peer_bitfields: &mut Arc<Mutex<HashMap<Peer, Vec<u8>>>>,
+        peer_connection_states: &mut Arc<Mutex<HashMap<Peer, PeerConnectionState>>>) -> Result<(JoinHandle<i32>, Peer), anyhow::Error> {
+    let (other_peer_handshake, mut other_peer_stream) = peer::Peer::handshake(&peer_address, &current_peer_handshake)?;
+
+    let peer_bitfields_per_thread = Arc::clone(&peer_bitfields);
+    let other_peer: Peer = (&other_peer_handshake).peer.clone();
+    peer_connection_states.lock().unwrap().insert(other_peer.clone(), PeerConnectionState::Initial);
+    println!("Established connection to the peer {:?} peer address {:?}", other_peer.clone(), peer_address);
+    let thread = thread::spawn(move || {
+        loop {
+            //TODO: Implement reading the messages from the peer and also writing messages to the peer
+            let mut buffer: [u8; 512] = [0; 512];
+            let mut total_bytes_read: usize = 0;
+            let mut message_content: Vec<u8> = Vec::new();
+            let mut message_length_bytes: usize = 0;
+            let mut message_type: u8 = 0;
+
+            //Read the contents of the current message
+            while message_length_bytes == 0 || total_bytes_read < message_length_bytes {
+                match other_peer_stream.read(&mut buffer) {
+                    Ok(bytes_read) => {
+                        if total_bytes_read == 0 {
+                            if bytes_read < 5 {
+                                continue;
+                            }
+                            message_length_bytes = (buffer[0] as usize) << 24| (buffer[1] as usize) << 16 | (buffer[2] as usize) << 8 | (buffer[3] as usize);
+                            message_type = buffer[4];
+                        }
+                        message_content.extend(buffer[4..bytes_read].to_vec());
+                        //println!("bytes_read = {}, total_bytes_read = {}, message_length_bytes = {}, message_type = {}", bytes_read, total_bytes_read, message_length_bytes, message_type);
+                        total_bytes_read = total_bytes_read + bytes_read;
+                    },
+                    Err(e) => {
+                        eprintln!("Failed to read from socket: {}", e);
+                        break;
+                    }
+                }
+            }
+
+            //"bitfield" message
+            if message_type == 5 {
+                println!("Received 'bitfield' message from the peer {:?}", other_peer.clone());
+                peer_bitfields_per_thread.lock().unwrap().insert(other_peer.clone(), message_content);
+            }
+        }
+        0 // result
+    });
+    Ok((thread, other_peer_handshake.peer.clone()))
 }
