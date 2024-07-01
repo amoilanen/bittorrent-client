@@ -3,6 +3,7 @@
 -- Implement upload functionality
 -- Be able to download from multiple peers
 -- Be able to upload to multiple peers
+-- Support resuming and pausing downloads/uploads
 -- Support multifile torrents
 
 -- Periodically re-request peers from the tracker when running a long file download: discover the newly connected peers, handle peers dropping the connection

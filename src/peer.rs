@@ -52,9 +52,36 @@ pub(crate) struct PeerMessage {
     pub(crate) payload: Vec<u8>
 }
 
+impl PeerMessage {
+    pub(crate) fn with_id(message_id: PeerMessageId) -> PeerMessage {
+        PeerMessage {
+            message_id,
+            payload: Vec::new()
+        }
+    }
+
+    pub(crate) fn new(message_id: PeerMessageId, payload: Vec<u8>) -> PeerMessage {
+        PeerMessage {
+            message_id,
+            payload
+        }
+    }
+
+    pub(crate) fn get_bytes(self) -> Vec<u8> {
+        let mut result: Vec<u8> = Vec::new();
+        let message_length = 1 + self.payload.len(); // message_id takes one byte
+        result.extend((message_length as u32).to_be_bytes());
+        result.push(self.message_id as u8);
+        result.extend(self.payload);
+        return result;
+    }
+}
+
+#[derive(PartialEq)]
 pub(crate) enum PeerConnectionState {
     Initial,
-    ReceivedBitField,
+    ReceivedBitfield,
+    Interested,
     Choked,
     Unchoked
 }
