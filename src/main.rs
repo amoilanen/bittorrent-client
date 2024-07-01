@@ -2,7 +2,7 @@ use std::{env, io::Read, thread};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use anyhow::Result;
-use peer::{ PeerAddress, Peer, PeerConnectionState };
+use peer::{ Peer, PeerAddress, PeerConnectionState, PeerMessageId };
 use std::collections::HashMap;
 
 mod bencoded;
@@ -158,42 +158,17 @@ fn connect_to_peer(
     let peer_bitfields_per_thread = Arc::clone(&peer_bitfields);
     let other_peer: Peer = (&other_peer_handshake).peer.clone();
     peer_connection_states.lock().unwrap().insert(other_peer.clone(), PeerConnectionState::Initial);
+    let connection_states = Arc::clone(&peer_connection_states);
     println!("Established connection to the peer {:?} peer address {:?}", other_peer.clone(), peer_address);
     let thread = thread::spawn(move || {
         loop {
-            //TODO: Implement reading the messages from the peer and also writing messages to the peer
-            let mut buffer: [u8; 512] = [0; 512];
-            let mut total_bytes_read: usize = 0;
-            let mut message_content: Vec<u8> = Vec::new();
-            let mut message_length_bytes: usize = 0;
-            let mut message_type: u8 = 0;
-
-            //Read the contents of the current message
-            while message_length_bytes == 0 || total_bytes_read < message_length_bytes {
-                match other_peer_stream.read(&mut buffer) {
-                    Ok(bytes_read) => {
-                        if total_bytes_read == 0 {
-                            if bytes_read < 5 {
-                                continue;
-                            }
-                            message_length_bytes = (buffer[0] as usize) << 24| (buffer[1] as usize) << 16 | (buffer[2] as usize) << 8 | (buffer[3] as usize);
-                            message_type = buffer[4];
-                        }
-                        message_content.extend(buffer[4..bytes_read].to_vec());
-                        //println!("bytes_read = {}, total_bytes_read = {}, message_length_bytes = {}, message_type = {}", bytes_read, total_bytes_read, message_length_bytes, message_type);
-                        total_bytes_read = total_bytes_read + bytes_read;
-                    },
-                    Err(e) => {
-                        eprintln!("Failed to read from socket: {}", e);
-                        break;
-                    }
-                }
-            }
+            let message = Peer::read_message(&mut other_peer_stream).unwrap();
 
             //"bitfield" message
-            if message_type == 5 {
+            if message.message_id == PeerMessageId::Bitfield {
                 println!("Received 'bitfield' message from the peer {:?}", other_peer.clone());
-                peer_bitfields_per_thread.lock().unwrap().insert(other_peer.clone(), message_content);
+                peer_bitfields_per_thread.lock().unwrap().insert(other_peer.clone(), message.payload);
+                connection_states.lock().unwrap().insert(other_peer.clone(), PeerConnectionState::ReceivedBitField);
             }
         }
         0 // result

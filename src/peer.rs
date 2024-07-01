@@ -17,8 +17,44 @@ pub(crate) fn random_peer_id() -> String {
     generate_random_number_string(20)
 }
 
+#[derive(PartialEq)]
+pub(crate) enum PeerMessageId {
+    Choke = 0,
+    Unchoke = 1,
+    Interested = 2,
+    NotInterested = 3,
+    Have = 4,
+    Bitfield = 5,
+    Request = 6,
+    Piece = 7,
+    Cancel = 8
+}
+
+impl PeerMessageId {
+    fn lookup(value: u8) -> Result<PeerMessageId, anyhow::Error> {
+        match value {
+            0 => Ok(PeerMessageId::Choke),
+            1 => Ok(PeerMessageId::Unchoke),
+            2 => Ok(PeerMessageId::Interested),
+            3 => Ok(PeerMessageId::NotInterested),
+            4 => Ok(PeerMessageId::Have),
+            5 => Ok(PeerMessageId::Bitfield),
+            6 => Ok(PeerMessageId::Request),
+            7 => Ok(PeerMessageId::Piece),
+            8 => Ok(PeerMessageId::Cancel),
+            _ => Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Unknown peer message id {:?}", value)).into())
+        }
+    }
+}
+
+pub(crate) struct PeerMessage {
+    pub(crate) message_id: PeerMessageId,
+    pub(crate) payload: Vec<u8>
+}
+
 pub(crate) enum PeerConnectionState {
     Initial,
+    ReceivedBitField,
     Choked,
     Unchoked
 }
@@ -58,6 +94,32 @@ impl Peer {
             info_hash,
             peer: Peer { id: peer_id }
         }, stream))
+    }
+
+    pub(crate) fn read_message(stream: &mut TcpStream) -> Result<PeerMessage, anyhow::Error> {
+        let mut buffer: [u8; 512] = [0; 512];
+        let mut total_bytes_read: usize = 0;
+        let mut message_content: Vec<u8> = Vec::new();
+        let mut message_length: usize = 0;
+        let mut message_type: u8 = 0;
+
+        while message_length == 0 || total_bytes_read < message_length + 4 { //size of the length prefix
+            let bytes_read = stream.read(&mut buffer)?;
+            if total_bytes_read == 0 {
+                if bytes_read < 5 {
+                    continue;
+                }
+                message_length = (buffer[0] as usize) << 24| (buffer[1] as usize) << 16 | (buffer[2] as usize) << 8 | (buffer[3] as usize);
+                message_type = buffer[4];
+            }
+            message_content.extend(buffer[4..bytes_read].to_vec());
+            //println!("bytes_read = {}, total_bytes_read = {}, message_length_bytes = {}, message_type = {}", bytes_read, total_bytes_read, message_length_bytes, message_type);
+            total_bytes_read = total_bytes_read + bytes_read;
+        }
+        Ok(PeerMessage {
+            message_id: PeerMessageId::lookup(message_type)?,
+            payload: message_content
+        })
     }
 }
 
