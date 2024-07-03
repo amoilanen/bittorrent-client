@@ -15,9 +15,10 @@ mod peer;
 
 // Usage: your_bittorrent.sh decode "<encoded_value>"
 fn main() -> Result<(), anyhow::Error> {
-    let args: Vec<String> = env::args().collect();
-    let command = &args[1];
-    //let command = "peers";
+    //let args: Vec<String> = env::args().collect();
+    //let command = &args[1];
+    let command = "download_piece";
+    let args: Vec<String> = vec!["", "", "-o", "/tmp/test-piece-0", "sample.torrent", "0"].iter().map(|x| x.to_string()).collect();
 
     if command == "decode" {
         let encoded_value = &args[2];
@@ -127,11 +128,13 @@ fn main() -> Result<(), anyhow::Error> {
             for other_peer_address in response.get_peer_addresses()? {
                 let (peer_thread, peer) = exchange_messages_with_peer(&current_peer_handshake, &other_peer_address, &mut peer_bitfields, &mut peer_connection_states)?;
                 peer_threads.insert(peer, peer_thread);
+                //Only connect to the first peer to ease the debugging
+                //break;
             }
             //TODO: Add double-way communication handlers for every connected peer - OK
             //TODO: Handle the "bitfield" message from the peer - OK
-            //TODO: Handle the "choke" message from the peer
-            //TODO: Handle the "unchoke" message from the peer
+            //TODO: Handle the "choke" message from the peer - OK
+            //TODO: Handle the "unchoke" message from the peer - OK
 
             //TODO: While the piece has not been downloaded fully send "request" messages for the blocks of this piece to the peers which have the piece
             //TODO: Handle the incoming "piece" message from the peer
@@ -158,19 +161,25 @@ fn exchange_messages_with_peer(
 
     let peer_bitfields_per_thread = Arc::clone(&peer_bitfields);
     let other_peer: Peer = (&other_peer_handshake).peer.clone();
-    peer_connection_states.lock().unwrap().insert(other_peer.clone(), PeerConnectionState::Initial);
+    {
+        peer_connection_states.lock().unwrap().insert(other_peer.clone(), PeerConnectionState::Initial);
+    }
     let connection_states = Arc::clone(&peer_connection_states);
     println!("Established connection to peer {:?} peer address {:?}", other_peer.clone(), peer_address);
     let thread = thread::spawn(move || {
         loop {
-            if let Some(connection_state) = connection_states.lock().unwrap().get(&other_peer) {
+            let current_state = {
+                let states = connection_states.lock().unwrap();
+                states.get(&other_peer).cloned()
+            };
+            if let Some(connection_state) = current_state {
                 // Check the current connection state and send messages to the peer if the state of the connection requires it
-                if connection_state == &PeerConnectionState::ReceivedBitfield {
+                if connection_state == PeerConnectionState::ReceivedBitfield {
                     println!("Sending: 'interested' to peer {:?}", other_peer.clone());
                     let interested_message = PeerMessage::with_id(PeerMessageId::Interested);
                     other_peer_stream.write_all(&interested_message.get_bytes()).unwrap();
                     connection_states.lock().unwrap().insert(other_peer.clone(), PeerConnectionState::Interested);
-                    println!("Sent: 'interested' to peer {:?}", other_peer.clone());
+                    //println!("Sent: 'interested' to peer {:?}", other_peer.clone());
                 // Receive messages from the peer
                 } else {
                     let message = Peer::read_message(&mut other_peer_stream).unwrap();
@@ -179,6 +188,7 @@ fn exchange_messages_with_peer(
                         println!("Received: 'bitfield' from peer {:?}", other_peer.clone());
                         peer_bitfields_per_thread.lock().unwrap().insert(other_peer.clone(), message.payload);
                         connection_states.lock().unwrap().insert(other_peer.clone(), PeerConnectionState::ReceivedBitfield);
+                        //println!("Inserted PeerConnectionState::ReceivedBitfield")
                     } else if message.message_id == PeerMessageId::Unchoke {
                         println!("Received: 'unchoke' from peer {:?}", other_peer.clone());
                         connection_states.lock().unwrap().insert(other_peer.clone(), PeerConnectionState::Unchoked);

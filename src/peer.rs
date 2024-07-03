@@ -77,7 +77,7 @@ impl PeerMessage {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone)]
 pub(crate) enum PeerConnectionState {
     Initial,
     ReceivedBitfield,
