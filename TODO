@@ -1,3 +1,6 @@
+-- Initialize the file to be downloaded with all zeros in the local filesystem, once a piece is downloaded update the corresponding file part in the local file system
+   -- Keep the metainformation which blocks were already downloaded and which not in a separate file (based on the this file the "bitfield" message should be sent to peers when connecting to them)
+
 -- "If both sides don't send the same value, they sever the connection." when doing a handshake with a peer https://www.bittorrent.org/beps/bep_0003.html#peer-messages
 
 -- Send "cancel" messages closer to the end of the download https://www.bittorrent.org/beps/bep_0003.html#peer-messages 

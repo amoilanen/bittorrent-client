@@ -2,6 +2,7 @@ use std::io::Write;
 use std::thread;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::cmp;
 use anyhow::Result;
 use peer::{ Peer, PeerAddress, PeerConnectionState, PeerInterestedState, PeerChokedState, PeerMessage, PeerMessageId };
 use std::collections::HashMap;
@@ -92,7 +93,7 @@ fn main() -> Result<(), anyhow::Error> {
         } else {
             let output_file_path =&args[3];
             let torrent_file_path = &args[4];
-            let piece_index = &args[5].parse::<usize>()?;
+            let piece_index = args[5].parse::<usize>()?;
             println!("Downloading piece {:?} from torrent {:?} to file {:?}", piece_index, torrent_file_path, output_file_path);
 
             let torrent_file_bytes = std::fs::read(torrent_file_path)?;
@@ -126,6 +127,26 @@ fn main() -> Result<(), anyhow::Error> {
                     id: current_peer_id.as_bytes().to_vec()
                 }
             };
+
+            let piece_length = torrent.info.piece_length;
+            let number_of_pieces = (torrent.info.length.unwrap_or(0) + piece_length - 1) / piece_length;
+            if piece_index >= number_of_pieces {
+                return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Invalid piece index {:?}, total number of pieces {:?}", piece_index, number_of_pieces)).into())
+            }
+            println!("Piece length: {:?}", piece_length);
+            println!("Total number of pieces to download: {:?}", number_of_pieces);
+
+            let block_size_bytes = 16 * 1024; // 2^14
+            let mut current_begin_in_piece = 0;
+            let mut missing_piece_blocks = Vec::new();
+            while current_begin_in_piece < piece_length {
+                let current_block_length = cmp::min(block_size_bytes, piece_length - current_begin_in_piece);
+                missing_piece_blocks.push([current_begin_in_piece, current_block_length]);
+                current_begin_in_piece = current_begin_in_piece + current_block_length;
+            }
+            println!("Total number of blocks to download in the piece: {:?}", missing_piece_blocks.len());
+            println!("{:?}", missing_piece_blocks);
+
             for other_peer_address in response.get_peer_addresses()? {
                 let (peer_thread, peer) = exchange_messages_with_peer(&current_peer_handshake, &other_peer_address, &mut peer_bitfields, &mut peer_connection_states)?;
                 peer_threads.insert(peer, peer_thread);
