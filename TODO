@@ -1,12 +1,18 @@
+-- "If both sides don't send the same value, they sever the connection." when doing a handshake with a peer https://www.bittorrent.org/beps/bep_0003.html#peer-messages
+
+-- Send "cancel" messages closer to the end of the download https://www.bittorrent.org/beps/bep_0003.html#peer-messages 
 -- Support the UDP protocol for the torrent tracker https://www.bittorrent.org/beps/bep_0015.html
 -- Show the progress in the console together with the stats
 -- Implement upload functionality
 -- Be able to download from multiple peers
 -- Be able to upload to multiple peers
--- Support resuming and pausing downloads/uploads
--- Support multifile torrents
+-- Keep the download and upload rates for peers and reciprocate by unchoking the peers which allow to download "It does reciprocation and number of uploads capping by unchoking the four peers which it has the best download rates from and are interested..." https://www.bittorrent.org/beps/bep_0003.html#peer-messages
 
--- Periodically re-request peers from the tracker when running a long file download: discover the newly connected peers, handle peers dropping the connection
+-- Support resuming and pausing downloads/uploads
+-- Support downloading and uploading multiple torrents at once
+
+-- Periodically re-request peers from the tracker when running a long file download: discover the newly connected peers
+-- Send keep alive messages to peers (handle peers dropping the connection) "Keepalives are generally sent once every two minutes, but note that timeouts can be done much more quickly when data is expected."
 
 -- Possible to generate a metainfo file (.torrent file) for a given file or directory and given a tracker
 -- Support all the fields including the optional ones from the spec https://www.bittorrent.org/beps/bep_0003.html

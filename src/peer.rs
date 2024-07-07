@@ -78,12 +78,44 @@ impl PeerMessage {
 }
 
 #[derive(PartialEq, Clone)]
-pub(crate) enum PeerConnectionState {
-    Initial,
-    ReceivedBitfield,
-    Interested,
+pub(crate) struct PeerConnectionState {
+    pub(crate) choked: PeerChokedState,
+    pub(crate) interested: PeerInterestedState
+}
+
+impl PeerConnectionState {
+    pub(crate) fn initial() -> PeerConnectionState {
+        PeerConnectionState {
+            choked: PeerChokedState::Choked,
+            interested: PeerInterestedState::NotInterested
+        }
+    }
+
+    pub(crate) fn update_choked(&self, choked: PeerChokedState) -> PeerConnectionState {
+        PeerConnectionState {
+            choked,
+            interested: self.interested
+        }
+    }
+
+    pub(crate) fn update_interested(&self, interested: PeerInterestedState) -> PeerConnectionState {
+        PeerConnectionState {
+            choked: self.choked,
+            interested
+        }
+    }
+}
+
+#[derive(PartialEq, Clone, Copy)]
+pub(crate) enum PeerChokedState {
     Choked,
     Unchoked
+}
+
+#[derive(PartialEq, Clone, Copy)]
+pub(crate) enum PeerInterestedState {
+    Interested,
+    NotInterested
 }
 
 #[derive(Debug)]
