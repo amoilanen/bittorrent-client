@@ -118,6 +118,13 @@ pub(crate) enum PeerInterestedState {
     NotInterested
 }
 
+#[derive(PartialEq, Clone)]
+pub(crate) enum BlockState {
+    Absent,
+    Requested,
+    Present
+}
+
 #[derive(Debug)]
 pub(crate) struct PeerAddress {
     pub(crate) address: IpAddr,

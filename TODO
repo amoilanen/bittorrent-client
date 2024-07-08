@@ -12,6 +12,7 @@
 -- Keep the download and upload rates for peers and reciprocate by unchoking the peers which allow to download "It does reciprocation and number of uploads capping by unchoking the four peers which it has the best download rates from and are interested..." https://www.bittorrent.org/beps/bep_0003.html#peer-messages
 
 -- Support resuming and pausing downloads/uploads
+
 -- Support downloading and uploading multiple torrents at once
 
 -- Periodically re-request peers from the tracker when running a long file download: discover the newly connected peers
