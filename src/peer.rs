@@ -17,7 +17,7 @@ pub(crate) fn random_peer_id() -> String {
     generate_random_number_string(20)
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 pub(crate) enum PeerMessageId {
     Choke = 0,
     Unchoke = 1,
@@ -75,6 +75,23 @@ impl PeerMessage {
         result.extend(self.payload);
         return result;
     }
+
+    pub(crate) fn to_string(&self) -> String {
+        format!("PeerMessage[{:?}, {:?}]", self.message_id, String::from_utf8(self.payload.clone()))
+    }
+
+    pub(crate) fn new_request(index: usize, begin: usize, length: usize) -> PeerMessage {
+        let mut payload: Vec<u8> = Vec::new();
+        payload.extend((index as u32).to_be_bytes());
+        payload.extend((begin as u32).to_be_bytes());
+        payload.extend((length as u32).to_be_bytes());
+        PeerMessage {
+            message_id: PeerMessageId::Request,
+            payload
+        }
+    }
+    //TODO: "new_piece"
+    //TODO: "new_cancel"
 }
 
 #[derive(PartialEq, Clone)]

@@ -156,6 +156,7 @@ fn main() -> Result<(), anyhow::Error> {
                 let (other_peer_handshake, other_peer_stream) = peer::Peer::handshake(&other_peer_address, &current_peer_handshake)?;
                 println!("Established connection to peer {:?} peer address {:?}", other_peer_handshake.peer.clone(), &other_peer_address);
                 let peer_thread = exchange_messages_with_peer(
+                    piece_index,
                     &other_peer_handshake.peer,
                     other_peer_stream,
                     &missing_piece_blocks_shared,
@@ -166,7 +167,7 @@ fn main() -> Result<(), anyhow::Error> {
                 )?;
                 peer_threads.insert(other_peer_handshake.peer.clone(), peer_thread);
                 //Only connect to the first peer to ease the debugging
-                //break;
+                break;
             }
             //TODO: Add double-way communication handlers for every connected peer - OK
             //TODO: Handle the "bitfield" message from the peer - OK
@@ -194,6 +195,7 @@ fn main() -> Result<(), anyhow::Error> {
 }
 
 fn exchange_messages_with_peer(
+        piece_index: usize,
         peer: &peer::Peer,
         mut other_peer_stream: TcpStream,
         missing_piece_blocks: &Arc<Mutex<Vec<[usize; 2]>>>,
@@ -210,33 +212,22 @@ fn exchange_messages_with_peer(
     let blocks_downloaded = Arc::clone(&piece_blocks_downloaded);
     let connection_states = Arc::clone(&peer_connection_states);    let other_peer = peer.clone();
     let thread = thread::spawn(move || {
+        let mut sending = true;
         loop {
             let current_state = {
                 let states = connection_states.lock().unwrap();
                 states.get(&other_peer).cloned()
             };
-            if let Some(connection_state) = current_state {
-                // Check the current connection state and send messages to the peer if the state of the connection requires it
-                if connection_state.interested == PeerInterestedState::NotInterested {
-                    println!("Sending: 'interested' to peer {:?}", other_peer.clone());
-                    let interested_message = PeerMessage::with_id(PeerMessageId::Interested);
-                    other_peer_stream.write_all(&interested_message.get_bytes()).unwrap();
-                    connection_states.lock().unwrap().insert(other_peer.clone(), connection_state.update_interested(PeerInterestedState::Interested));
-                    //println!("Sent: 'interested' to peer {:?}", other_peer.clone());
-                // Receive messages from the peer
-                } else {
-                    if connection_state.choked == PeerChokedState::Choked {
-                        let message = Peer::read_message(&mut other_peer_stream).unwrap();
-                        if message.message_id == PeerMessageId::Bitfield {
-                            println!("Received: 'bitfield' from peer {:?}", other_peer.clone());
-                            bitfields.lock().unwrap().insert(other_peer.clone(), message.payload);
-                            //println!("Inserted PeerConnectionState::ReceivedBitfield")
-                        } else if message.message_id == PeerMessageId::Unchoke {
-                            println!("Received: 'unchoke' from peer {:?}", other_peer.clone());
-                            connection_states.lock().unwrap().insert(other_peer.clone(), connection_state.update_choked(PeerChokedState::Unchoked));
-                        }
-                        //TODO: Receive the "piece" message, it can also arrive in the "Choked" state
-                    } else { // Interested and unchoked
+            if sending {
+                if let Some(connection_state) = current_state {
+                    // Check the current connection state and send messages to the peer if the state of the connection requires it
+                    if connection_state.interested == PeerInterestedState::NotInterested {
+                        //println!("Sending: 'interested' to peer {:?}", other_peer.clone());
+                        let interested_message = PeerMessage::with_id(PeerMessageId::Interested);
+                        other_peer_stream.write_all(&interested_message.get_bytes()).unwrap();
+                        connection_states.lock().unwrap().insert(other_peer.clone(), connection_state.update_interested(PeerInterestedState::Interested));
+                        println!("Sent: 'interested' to peer {:?}", other_peer.clone());
+                    } else if connection_state.choked == PeerChokedState::Unchoked {
                         let mut blocks_state = blocks_downloaded.lock().unwrap();
                         let missing = missing_blocks.lock().unwrap();
                         let next_blocks_to_ask: Vec<usize> = blocks_state
@@ -244,24 +235,42 @@ fn exchange_messages_with_peer(
                                 Some(index)
                             } else {
                                 None
-                            }).take(5).collect();
-                        next_blocks_to_ask.iter().for_each(|index|
-                            blocks_state[*index] = BlockState::Requested
-                        );
-                        let next_block_requests: Vec<[usize; 2]> = next_blocks_to_ask.iter().map(|index| {
-                            //TODO: Construct the body of the request from missing[*index] and bencode the parameters of the request
-                            let request_body: Vec<u8> = Vec::new();
-                            let block_request = PeerMessage::new(PeerMessageId::Request, request_body);
-                            missing[*index]
-                        }).collect();
-
-                        //TODO: Periodically reset the BlockState::Requested state of the blocks to Absent to allow them to be requested from other peers: in case
-                        //download is taking too much or the peer did not respond with a block
-
-                        //TODO: Receive the "piece" message
+                            }).take(1).collect(); //take 5 ? request 5 pieces from the same peer for more optimal download?
+                        if next_blocks_to_ask.len() >0 {
+                            next_blocks_to_ask.iter().for_each(|index|
+                                blocks_state[*index] = BlockState::Requested
+                            );
+                            let next_block_requests: Vec<PeerMessage> = next_blocks_to_ask.iter().map(|index| {
+                                let [block_begin, block_length] = missing[*index];
+                                let request = PeerMessage::new_request(piece_index, block_begin, block_length);
+                                request
+                            }).collect();
+                            for request in next_block_requests {
+                                println!("Sent: 'request' {:?} to peer {:?}", &request.to_string(), other_peer.clone());
+                                other_peer_stream.write_all(&request.get_bytes()).unwrap();
+                            }
+                        }
+                    }
+                }
+            } else {
+                if let Some(connection_state) = current_state {
+                    let message = Peer::read_message(&mut other_peer_stream).unwrap();
+                    if message.message_id == PeerMessageId::Bitfield {
+                        println!("Received: 'bitfield' from peer {:?}", other_peer.clone());
+                        bitfields.lock().unwrap().insert(other_peer.clone(), message.payload);
+                        //println!("Inserted PeerConnectionState::ReceivedBitfield")
+                    } else if message.message_id == PeerMessageId::Unchoke {
+                        println!("Received: 'unchoke' from peer {:?}", other_peer.clone());
+                        connection_states.lock().unwrap().insert(other_peer.clone(), connection_state.update_choked(PeerChokedState::Unchoked));
+                    } else if message.message_id == PeerMessageId::Piece {
+                        println!("Received: 'piece' from peer {:?}", other_peer.clone());
+                        //TODO: Parse the 'piece' message, update piece_blocks and piece_blocks_downloaded
                     }
                 }
             }
+            //TODO: Periodically reset the BlockState::Requested state of the blocks to Absent to allow them to be requested from other peers: in case
+            //download is taking too much or the peer did not respond with a block
+            sending = !sending;
         }
         0 // result
     });
