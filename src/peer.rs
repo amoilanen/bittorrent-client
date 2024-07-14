@@ -48,11 +48,13 @@ impl PeerMessageId {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct PeerMessage {
     pub(crate) message_id: PeerMessageId,
     pub(crate) payload: Vec<u8>
 }
 
+#[derive(Debug)]
 pub(crate) struct PiecePeerMessage {
     pub(crate)  message_id: PeerMessageId,
     pub(crate)  index: usize,
@@ -152,7 +154,8 @@ impl PeerConnectionState {
 }
 
 pub(crate) struct Piece {
-    pub(crate) index: usize
+    pub(crate) index: usize,
+    pub(crate) piece_length: usize
 }
 
 impl Piece {
@@ -243,8 +246,10 @@ impl Peer {
                 }
                 message_length = (buffer[0] as usize) << 24| (buffer[1] as usize) << 16 | (buffer[2] as usize) << 8 | (buffer[3] as usize);
                 message_type = buffer[4];
+                message_content.extend(buffer[5..bytes_read].to_vec());
+            } else {
+                message_content.extend(buffer[0..bytes_read].to_vec());
             }
-            message_content.extend(buffer[4..bytes_read].to_vec());
             //println!("bytes_read = {}, total_bytes_read = {}, message_length_bytes = {}, message_type = {}", bytes_read, total_bytes_read, message_length_bytes, message_type);
             total_bytes_read = total_bytes_read + bytes_read;
         }

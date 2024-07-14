@@ -1,5 +1,4 @@
 use anyhow::Result;
-use sha1::{Sha1, Digest};
 use crate::bencoded::BencodeEncoding;
 
 #[derive(Debug, PartialEq)]
