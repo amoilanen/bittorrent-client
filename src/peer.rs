@@ -1,3 +1,4 @@
+use std::cmp;
 use std::io::Read;
 use std::io::Write;
 use std::net::IpAddr;
@@ -52,6 +53,13 @@ pub(crate) struct PeerMessage {
     pub(crate) payload: Vec<u8>
 }
 
+pub(crate) struct PiecePeerMessage {
+    pub(crate)  message_id: PeerMessageId,
+    pub(crate)  index: usize,
+    pub(crate)  begin: usize,
+    pub(crate)  block: Vec<u8>
+}
+
 impl PeerMessage {
     pub(crate) fn with_id(message_id: PeerMessageId) -> PeerMessage {
         PeerMessage {
@@ -90,8 +98,28 @@ impl PeerMessage {
             payload
         }
     }
+
+    pub(crate) fn as_piece(&self) -> Result<PiecePeerMessage, anyhow::Error> {
+        if self.payload.len() < 8 {
+            Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Not enough bytes in the 'piece' message {:?}", self.payload)).into())
+        } else {
+            let index = as_usize(&self.payload[0..4].try_into()?);
+            let begin = as_usize(&self.payload[4..8].try_into()?);
+            let block: Vec<u8> = self.payload[8..].to_vec();
+            Ok(PiecePeerMessage {
+                message_id: PeerMessageId::Piece,
+                index,
+                begin,
+                block
+            })
+        }
+    }
     //TODO: "new_piece"
     //TODO: "new_cancel"
+}
+
+fn as_usize(bytes: &[u8; 4]) -> usize {
+    (bytes[0] as usize) << 24| (bytes[1] as usize) << 16 | (bytes[2] as usize) << 8 | (bytes[3] as usize)
 }
 
 #[derive(PartialEq, Clone)]
@@ -123,6 +151,34 @@ impl PeerConnectionState {
     }
 }
 
+pub(crate) struct Piece {
+    pub(crate) index: usize
+}
+
+impl Piece {
+    pub(crate) fn get_blocks(&self, piece_length: usize) -> Vec<PieceBlock> {
+        let block_size_bytes = 16 * 1024; // 2^14
+        let mut current_begin_in_piece = 0;
+        let mut piece_blocks = Vec::new();
+        while current_begin_in_piece < piece_length {
+            let current_block_length = cmp::min(block_size_bytes, piece_length - current_begin_in_piece);
+            piece_blocks.push(PieceBlock {
+                begin: current_begin_in_piece,
+                length: current_block_length
+            });
+            current_begin_in_piece = current_begin_in_piece + current_block_length;
+        }
+        piece_blocks
+    }
+}
+
+
+#[derive(Debug)]
+pub(crate) struct PieceBlock {
+    pub(crate) begin: usize,
+    pub(crate) length: usize
+}
+
 #[derive(PartialEq, Clone, Copy)]
 pub(crate) enum PeerChokedState {
     Choked,
@@ -133,13 +189,6 @@ pub(crate) enum PeerChokedState {
 pub(crate) enum PeerInterestedState {
     Interested,
     NotInterested
-}
-
-#[derive(PartialEq, Clone)]
-pub(crate) enum BlockState {
-    Absent,
-    Requested,
-    Present
 }
 
 #[derive(Debug)]

@@ -3,10 +3,9 @@ use std::net::TcpStream;
 use std::thread;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::cmp;
 use anyhow::Result;
-use peer::{ BlockState, Peer, PeerAddress, PeerConnectionState, PeerInterestedState, PeerChokedState, PeerMessage, PeerMessageId };
-use sha1::digest::block_buffer::Block;
+use peer::{ Peer, PeerAddress, PeerChokedState, PeerConnectionState, PeerInterestedState, PeerMessage, PeerMessageId, Piece, PieceBlock };
+use torrent::TorrentInfo;
 use std::collections::HashMap;
 
 mod bencoded;
@@ -15,6 +14,7 @@ mod format;
 mod tracker;
 mod url;
 mod peer;
+mod hash;
 
 // Usage: your_bittorrent.sh decode "<encoded_value>"
 fn main() -> Result<(), anyhow::Error> {
@@ -134,50 +134,39 @@ fn main() -> Result<(), anyhow::Error> {
             if piece_index >= number_of_pieces {
                 return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Invalid piece index {:?}, total number of pieces {:?}", piece_index, number_of_pieces)).into())
             }
+            let piece = Piece {
+                index: piece_index
+            };
             println!("Piece length: {:?}", piece_length);
             println!("Total number of pieces to download: {:?}", number_of_pieces);
-
-            let block_size_bytes = 16 * 1024; // 2^14
-            let mut current_begin_in_piece = 0;
-            let mut missing_piece_blocks = Vec::new();
-            while current_begin_in_piece < piece_length {
-                let current_block_length = cmp::min(block_size_bytes, piece_length - current_begin_in_piece);
-                missing_piece_blocks.push([current_begin_in_piece, current_block_length]);
-                current_begin_in_piece = current_begin_in_piece + current_block_length;
-            }
-            println!("Total number of blocks to download in the piece: {:?}", missing_piece_blocks.len());
-            println!("{:?}", missing_piece_blocks);
-            let missing_piece_blocks_length = missing_piece_blocks.len();
-            let mut missing_piece_blocks_shared: Arc<Mutex<Vec<[usize; 2]>>> = Arc::new(Mutex::new(missing_piece_blocks));
-            let mut piece_blocks: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
-            let mut piece_blocks_downloaded: Arc<Mutex<Vec<peer::BlockState>>> = Arc::new(Mutex::new(vec![peer::BlockState::Absent; missing_piece_blocks_length]));
+            let piece_blocks = piece.get_blocks(piece_length);
+            println!("Piece blocks {:?}", piece_blocks);
+            let piece_blocks_to_download: Arc<Mutex<Vec<PieceBlock>>> = Arc::new(Mutex::new(piece_blocks));
+            let mut piece_blocks: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::with_capacity(piece_length)));
+            let torrent_info: Arc<Mutex<TorrentInfo>>  = Arc::new(Mutex::new(torrent.info));
 
             for other_peer_address in response.get_peer_addresses()? {
                 let (other_peer_handshake, other_peer_stream) = peer::Peer::handshake(&other_peer_address, &current_peer_handshake)?;
                 println!("Established connection to peer {:?} peer address {:?}", other_peer_handshake.peer.clone(), &other_peer_address);
                 let peer_thread = exchange_messages_with_peer(
-                    piece_index,
+                    &torrent_info,
+                    piece.index,
                     &other_peer_handshake.peer,
                     other_peer_stream,
-                    &missing_piece_blocks_shared,
+                    &piece_blocks_to_download,
                     &mut piece_blocks,
-                    &mut piece_blocks_downloaded,
                     &mut peer_bitfields,
                     &mut peer_connection_states
                 )?;
                 peer_threads.insert(other_peer_handshake.peer.clone(), peer_thread);
-                //Only connect to the first peer to ease the debugging
+                //TODO: comment out the following line. Only connect to the first peer to ease the debugging
                 break;
             }
-            //TODO: Add double-way communication handlers for every connected peer - OK
-            //TODO: Handle the "bitfield" message from the peer - OK
-            //TODO: Handle the "choke" message from the peer - OK
-            //TODO: Handle the "unchoke" message from the peer - OK
-
             //TODO: While the piece has not been downloaded fully send "request" messages for the blocks of this piece to the peers which have the piece
             //TODO: Handle the incoming "piece" message from the peer
                //--If the piece has not been downloaded correctly/hash mismatches, restart the download
                //--If the piece has been downloaded correctly, stop the download, output the info in the format "Piece 0 downloaded to /tmp/test-piece-0."
+
             //TODO: Once downloading a piece is completed send a "have" message to the peers
             //TODO: Re-factor and extract the function(s) for downloading the piece to the "peer" module
 
@@ -195,55 +184,44 @@ fn main() -> Result<(), anyhow::Error> {
 }
 
 fn exchange_messages_with_peer(
+        torrent_info: &Arc<Mutex<TorrentInfo>>,
         piece_index: usize,
         peer: &peer::Peer,
         mut other_peer_stream: TcpStream,
-        missing_piece_blocks: &Arc<Mutex<Vec<[usize; 2]>>>,
-        piece_blocks: &mut Arc<Mutex<Vec<Vec<u8>>>>,
-        piece_blocks_downloaded: &mut Arc<Mutex<Vec<BlockState>>>,
+        piece_blocks_to_download: &Arc<Mutex<Vec<PieceBlock>>>,
+        piece_blocks: &mut Arc<Mutex<Vec<u8>>>,
         peer_bitfields: &mut Arc<Mutex<HashMap<Peer, Vec<u8>>>>,
         peer_connection_states: &mut Arc<Mutex<HashMap<Peer, PeerConnectionState>>>) -> Result<JoinHandle<i32>, anyhow::Error> {
     {
         peer_connection_states.lock().unwrap().insert(peer.clone(), PeerConnectionState::initial());
     }
-    let missing_blocks = Arc::clone(&missing_piece_blocks);
-    let bitfields = Arc::clone(&peer_bitfields);
-    let blocks = Arc::clone(&piece_blocks);
-    let blocks_downloaded = Arc::clone(&piece_blocks_downloaded);
-    let connection_states = Arc::clone(&peer_connection_states);    let other_peer = peer.clone();
+    let torrent_info_per_thread = Arc::clone(torrent_info);
+    let piece_blocks_to_download_per_thread = Arc::clone(&piece_blocks_to_download);
+    let peer_bitfields_per_thread = Arc::clone(&peer_bitfields);
+    let piece_blocks_per_thread = Arc::clone(&piece_blocks);
+    let peer_connection_states_per_thread = Arc::clone(&peer_connection_states);    let other_peer = peer.clone();
     let thread = thread::spawn(move || {
         let mut sending = true;
         loop {
             let current_state = {
-                let states = connection_states.lock().unwrap();
+                let states = peer_connection_states_per_thread.lock().unwrap();
                 states.get(&other_peer).cloned()
             };
             if sending {
                 if let Some(connection_state) = current_state {
-                    // Check the current connection state and send messages to the peer if the state of the connection requires it
                     if connection_state.interested == PeerInterestedState::NotInterested {
+                        let mut peer_connection_states = peer_connection_states_per_thread.lock().unwrap();
                         //println!("Sending: 'interested' to peer {:?}", other_peer.clone());
                         let interested_message = PeerMessage::with_id(PeerMessageId::Interested);
                         other_peer_stream.write_all(&interested_message.get_bytes()).unwrap();
-                        connection_states.lock().unwrap().insert(other_peer.clone(), connection_state.update_interested(PeerInterestedState::Interested));
+                        peer_connection_states.insert(other_peer.clone(), connection_state.update_interested(PeerInterestedState::Interested));
                         println!("Sent: 'interested' to peer {:?}", other_peer.clone());
                     } else if connection_state.choked == PeerChokedState::Unchoked {
-                        let mut blocks_state = blocks_downloaded.lock().unwrap();
-                        let missing = missing_blocks.lock().unwrap();
-                        let next_blocks_to_ask: Vec<usize> = blocks_state
-                            .iter().enumerate().filter_map(|(index, x)| if x == &BlockState::Absent {
-                                Some(index)
-                            } else {
-                                None
-                            }).take(1).collect(); //take 5 ? request 5 pieces from the same peer for more optimal download?
-                        if next_blocks_to_ask.len() >0 {
-                            next_blocks_to_ask.iter().for_each(|index|
-                                blocks_state[*index] = BlockState::Requested
-                            );
-                            let next_block_requests: Vec<PeerMessage> = next_blocks_to_ask.iter().map(|index| {
-                                let [block_begin, block_length] = missing[*index];
-                                let request = PeerMessage::new_request(piece_index, block_begin, block_length);
-                                request
+                        let mut piece_blocks_to_download = piece_blocks_to_download_per_thread.lock().unwrap();
+                        let next_blocks_to_ask: Vec<PieceBlock> = piece_blocks_to_download.drain(0..1).collect(); //take 5 ? request 5 blocks from the same peer for more optimal download?
+                        if next_blocks_to_ask.len() > 0 {
+                            let next_block_requests: Vec<PeerMessage> = next_blocks_to_ask.iter().map(|block| {
+                                PeerMessage::new_request(piece_index, block.begin, block.length)
                             }).collect();
                             for request in next_block_requests {
                                 println!("Sent: 'request' {:?} to peer {:?}", &request.to_string(), other_peer.clone());
@@ -257,14 +235,27 @@ fn exchange_messages_with_peer(
                     let message = Peer::read_message(&mut other_peer_stream).unwrap();
                     if message.message_id == PeerMessageId::Bitfield {
                         println!("Received: 'bitfield' from peer {:?}", other_peer.clone());
-                        bitfields.lock().unwrap().insert(other_peer.clone(), message.payload);
+                        peer_bitfields_per_thread.lock().unwrap().insert(other_peer.clone(), message.payload);
                         //println!("Inserted PeerConnectionState::ReceivedBitfield")
                     } else if message.message_id == PeerMessageId::Unchoke {
                         println!("Received: 'unchoke' from peer {:?}", other_peer.clone());
-                        connection_states.lock().unwrap().insert(other_peer.clone(), connection_state.update_choked(PeerChokedState::Unchoked));
+                        peer_connection_states_per_thread.lock().unwrap().insert(other_peer.clone(), connection_state.update_choked(PeerChokedState::Unchoked));
                     } else if message.message_id == PeerMessageId::Piece {
+                        let piece_blocks_to_download = piece_blocks_to_download_per_thread.lock().unwrap();
+                        let mut piece_blocks = piece_blocks_per_thread.lock().unwrap();
                         println!("Received: 'piece' from peer {:?}", other_peer.clone());
-                        //TODO: Parse the 'piece' message, update piece_blocks and piece_blocks_downloaded
+                        let piece_message = message.as_piece().unwrap();
+
+                        //TODO: Debug the indexes for the following line
+                        piece_blocks[piece_message.begin..(piece_message.begin + piece_message.block.len())].copy_from_slice(&piece_message.block);
+                        if piece_blocks_to_download.is_empty() {
+                            let torrent_info = torrent_info_per_thread.lock().unwrap();
+                            let expected_piece_hash = torrent_info.pieces[piece_index * 20..piece_index * 21].to_vec();
+                            let computed_piece_hash = hash::compute_hash(&piece_blocks);
+                            println!("Finished download, expected and computed hashes:");
+                            println!("Expected hash: {}", format::format_as_hex_string(&expected_piece_hash));
+                            println!("Computed hash: {}", format::format_as_hex_string(&computed_piece_hash));
+                        }
                     }
                 }
             }

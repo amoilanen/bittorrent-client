@@ -42,9 +42,7 @@ impl TorrentInfo {
     }
 
     pub(crate) fn compute_hash(&self) -> Vec<u8> {
-        let mut hasher = Sha1::new();
-        hasher.update(self.bencode());
-        hasher.finalize().to_vec()
+        crate::hash::compute_hash(&self.bencode())
     }
 }
 
