@@ -214,7 +214,8 @@ fn exchange_messages_with_peer(
     let piece_blocks_to_download_per_thread = Arc::clone(&piece_blocks_to_download);
     let peer_bitfields_per_thread = Arc::clone(&peer_bitfields);
     let piece_blocks_per_thread = Arc::clone(&piece_blocks);
-    let peer_connection_states_per_thread = Arc::clone(&peer_connection_states);    let other_peer = peer.clone();
+    let peer_connection_states_per_thread = Arc::clone(&peer_connection_states);
+    let other_peer = peer.clone();
     let thread = thread::spawn(move || {
         let mut sending = true;
         loop {
@@ -243,7 +244,7 @@ fn exchange_messages_with_peer(
                         let next_blocks_to_ask = {
                             let mut piece_blocks_to_download = piece_blocks_to_download_per_thread.lock().unwrap();
                             let remaining_piece_blocks_number = piece_blocks_to_download.len();
-                            let next_piece_blocks_number = min(5, remaining_piece_blocks_number);
+                            let next_piece_blocks_number = min(5, remaining_piece_blocks_number); //request 5 pieces instead?
                             if next_piece_blocks_number == 0 {
                                 Vec::new()
                             } else {

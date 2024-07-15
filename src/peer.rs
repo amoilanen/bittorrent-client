@@ -242,7 +242,9 @@ impl Peer {
                 512
             } else {
                 let remaining_bytes_to_read = message_length + 4 - total_bytes_read;
-                std::cmp::min(512, remaining_bytes_to_read)
+                let buffer_size = std::cmp::min(512, remaining_bytes_to_read);
+                //println!("buffer_size= {}, message_length = {}, remaining_bytes_to_read = {}", buffer_size, message_length, remaining_bytes_to_read);
+                buffer_size
             };
             let mut buffer = vec![0; buffer_size];
             let bytes_read = stream.read(&mut buffer)?;
