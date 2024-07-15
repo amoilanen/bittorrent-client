@@ -231,7 +231,7 @@ impl Peer {
         }, stream))
     }
 
-    pub(crate) fn read_message(stream: &mut TcpStream) -> Result<PeerMessage, anyhow::Error> {
+    pub(crate) fn read_message(stream: &mut TcpStream) -> Result<Option<PeerMessage>, anyhow::Error> {
         let mut buffer: [u8; 512] = [0; 512];
         let mut total_bytes_read: usize = 0;
         let mut message_content: Vec<u8> = Vec::new();
@@ -240,23 +240,27 @@ impl Peer {
 
         while message_length == 0 || total_bytes_read < message_length + 4 { //size of the length prefix
             let bytes_read = stream.read(&mut buffer)?;
-            if total_bytes_read == 0 {
-                if bytes_read < 5 {
-                    continue;
-                }
-                message_length = (buffer[0] as usize) << 24| (buffer[1] as usize) << 16 | (buffer[2] as usize) << 8 | (buffer[3] as usize);
-                message_type = buffer[4];
-                message_content.extend(buffer[5..bytes_read].to_vec());
+            if bytes_read == 0 {
+                return Ok(None);
             } else {
-                message_content.extend(buffer[0..bytes_read].to_vec());
+                if total_bytes_read == 0 {
+                    if bytes_read < 5 {
+                        continue;
+                    }
+                    message_length = (buffer[0] as usize) << 24| (buffer[1] as usize) << 16 | (buffer[2] as usize) << 8 | (buffer[3] as usize);
+                    message_type = buffer[4];
+                    message_content.extend(buffer[5..bytes_read].to_vec());
+                } else {
+                    message_content.extend(buffer[0..bytes_read].to_vec());
+                }
+                //println!("bytes_read = {}, total_bytes_read = {}, message_length_bytes = {}, message_type = {}", bytes_read, total_bytes_read, message_length_bytes, message_type);
+                total_bytes_read = total_bytes_read + bytes_read;
             }
-            //println!("bytes_read = {}, total_bytes_read = {}, message_length_bytes = {}, message_type = {}", bytes_read, total_bytes_read, message_length_bytes, message_type);
-            total_bytes_read = total_bytes_read + bytes_read;
         }
-        Ok(PeerMessage {
+        Ok(Some(PeerMessage {
             message_id: PeerMessageId::lookup(message_type)?,
             payload: message_content
-        })
+        }))
     }
 }
 

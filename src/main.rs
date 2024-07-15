@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io::Write;
 use std::net::TcpStream;
 use std::thread;
+use std::time::Duration;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::cmp::min;
@@ -153,6 +154,7 @@ fn main() -> Result<(), anyhow::Error> {
 
             for other_peer_address in response.get_peer_addresses()? {
                 let (other_peer_handshake, other_peer_stream) = peer::Peer::handshake(&other_peer_address, &current_peer_handshake)?;
+                //other_peer_stream.set_read_timeout(Some(Duration::new(5, 0)))?;
                 println!("Established connection to peer {:?} peer address {:?}", format::format_as_hex_string(&other_peer_handshake.peer.id), &other_peer_address);
                 let peer_thread = exchange_messages_with_peer(
                     &download_finished,
@@ -170,7 +172,7 @@ fn main() -> Result<(), anyhow::Error> {
                 )?;
                 peer_threads.insert(other_peer_handshake.peer.clone(), peer_thread);
                 //TODO: comment out the following line. Only connect to the first peer to ease the debugging
-                //Downloading from multiple peers should also work as expected
+                //Downloading from multiple peers should also work as expected, gracefully terminate the remaining threads
                 break;
             }
             //TODO: Once downloading a piece is completed send a "have" message to the peers
@@ -229,27 +231,32 @@ fn exchange_messages_with_peer(
             if sending {
                 if let Some(connection_state) = current_state {
                     if connection_state.interested == PeerInterestedState::NotInterested {
-                        let mut peer_connection_states = peer_connection_states_per_thread.lock().unwrap();
-                        println!("Sending: 'interested' to peer {:?}", format::format_as_hex_string(&other_peer.id));
+                        //println!("Sending: 'interested' to peer {:?}", format::format_as_hex_string(&other_peer.id));
                         let interested_message = PeerMessage::with_id(PeerMessageId::Interested);
                         other_peer_stream.write_all(&interested_message.get_bytes()).unwrap();
-                        peer_connection_states.insert(other_peer.clone(), connection_state.update_interested(PeerInterestedState::Interested));
+                        {
+                            let mut peer_connection_states = peer_connection_states_per_thread.lock().unwrap();
+                            peer_connection_states.insert(other_peer.clone(), connection_state.update_interested(PeerInterestedState::Interested));
+                        }
                         println!("Sent: 'interested' to peer {:?}", format::format_as_hex_string(&other_peer.id));
                     } else if connection_state.choked == PeerChokedState::Unchoked {
-                        let mut piece_blocks_to_download = piece_blocks_to_download_per_thread.lock().unwrap();
-                        let remaining_piece_blocks_number = piece_blocks_to_download.len();
-                        let next_piece_blocks_number = min(2, remaining_piece_blocks_number);
-                        let next_blocks_to_ask = if next_piece_blocks_number == 0 {
-                            Vec::new()
-                        } else {
-                            piece_blocks_to_download.drain(0..next_piece_blocks_number).collect()
+                        let next_blocks_to_ask = {
+                            let mut piece_blocks_to_download = piece_blocks_to_download_per_thread.lock().unwrap();
+                            let remaining_piece_blocks_number = piece_blocks_to_download.len();
+                            let next_piece_blocks_number = min(5, remaining_piece_blocks_number);
+                            if next_piece_blocks_number == 0 {
+                                Vec::new()
+                            } else {
+                                piece_blocks_to_download.drain(0..next_piece_blocks_number).collect()
+                            }
                         };
                         if next_blocks_to_ask.len() > 0 {
                             let next_block_requests: Vec<PeerMessage> = next_blocks_to_ask.iter().map(|block| {
                                 PeerMessage::new_request(piece_index, block.begin, block.length)
                             }).collect();
                             for request in next_block_requests {
-                                println!("Sent: 'request' {:?} to peer {:?}", &request, format::format_as_hex_string(&other_peer.id));
+                                thread::sleep(std::time::Duration::from_millis(100));
+                                println!("Sending: 'request' {:?} to peer {:?}", &request, format::format_as_hex_string(&other_peer.id));
                                 other_peer_stream.write_all(&request.get_bytes()).unwrap();
                             }
                         }
@@ -257,48 +264,50 @@ fn exchange_messages_with_peer(
                 }
             } else {
                 if let Some(connection_state) = current_state {
-                    let message = Peer::read_message(&mut other_peer_stream).unwrap();
-                    if message.message_id == PeerMessageId::Bitfield {
-                        println!("Received: 'bitfield' from peer {:?}", format::format_as_hex_string(&other_peer.id));
-                        peer_bitfields_per_thread.lock().unwrap().insert(other_peer.clone(), message.payload);
-                        //println!("Inserted PeerConnectionState::ReceivedBitfield")
-                    } else if message.message_id == PeerMessageId::Unchoke {
-                        println!("Received: 'unchoke' from peer {:?}", format::format_as_hex_string(&other_peer.id));
-                        peer_connection_states_per_thread.lock().unwrap().insert(other_peer.clone(), connection_state.update_choked(PeerChokedState::Unchoked));
-                    } else if message.message_id == PeerMessageId::Piece {
-                        let piece_blocks_to_download = piece_blocks_to_download_per_thread.lock().unwrap();
-                        let mut remaining_piece_bytes_to_download = remaining_piece_bytes_to_download_per_thread.lock().unwrap();
-                        let mut piece_blocks = piece_blocks_per_thread.lock().unwrap();
-                        let piece_message = message.as_piece().unwrap();
-                        println!("Received: 'piece' index={:?}  begin={:?} length={:?} from peer {:?}", piece_message.index, piece_message.begin, piece_message.block.len(), format::format_as_hex_string(&other_peer.id));
-                        *remaining_piece_bytes_to_download = *remaining_piece_bytes_to_download - piece_message.block.len();
-                        //println!("Received: 'piece' from peer {:?}", format::format_as_hex_string(&other_peer.id));
-                        //println!("piece_blocks.len() = {}", piece_blocks.len());
-                        //println!("start_index = {}", piece_message.begin);
-                        //println!("end_index = {}", piece_message.begin + piece_message.block.len());
-                        //println!("block.len() = {}", piece_message.block.len());
-                        piece_blocks[piece_message.begin..(piece_message.begin + piece_message.block.len())].copy_from_slice(&piece_message.block);
-                        if *remaining_piece_bytes_to_download == 0 {
-                            //println!("torrent_info_pieces.len() = {}", torrent_info_per_thread.pieces.len());
-                            let expected_piece_hash = torrent_info_per_thread.pieces[piece_index * 20..(piece_index + 1) * 20].to_vec();
-                            let computed_piece_hash = hash::compute_hash(&piece_blocks);
-                            println!("Finished download, expected and computed hashes:");
-                            println!("Expected hash: {}", format::format_as_hex_string(&expected_piece_hash));
-                            println!("Computed hash: {}", format::format_as_hex_string(&computed_piece_hash));
-                            if expected_piece_hash == computed_piece_hash {
-                                let mut download_finished = download_finished_per_thread.lock().unwrap();
-                                //Finished downloading the piece successfully
-                                *download_finished = true;
-                                println!("Piece {} downloaded to {}.", piece_index, output_file_path_per_thread);
-                                let mut file = File::create(output_file_path_per_thread.as_str()).unwrap();
-                                file.write_all(piece_blocks.as_slice()).unwrap();
-                                break;
-                            } else {
-                                //Restarting the download of the piece from scratch: something went wrong
-                                let mut piece_blocks_to_download = piece_blocks_to_download_per_thread.lock().unwrap();
-                                let mut all_piece_blocks = piece_per_thread.get_blocks(piece_per_thread.piece_length);
-                                piece_blocks_to_download.append(&mut all_piece_blocks);
-                                *remaining_piece_bytes_to_download = piece_per_thread.piece_length;
+                    if let Some(message) = Peer::read_message(&mut other_peer_stream).unwrap() {
+                        if message.message_id == PeerMessageId::Bitfield {
+                            println!("Received: 'bitfield' from peer {:?}", format::format_as_hex_string(&other_peer.id));
+                            peer_bitfields_per_thread.lock().unwrap().insert(other_peer.clone(), message.payload);
+                            //println!("Inserted PeerConnectionState::ReceivedBitfield")
+                        } else if message.message_id == PeerMessageId::Unchoke {
+                            println!("Received: 'unchoke' from peer {:?}", format::format_as_hex_string(&other_peer.id));
+                            peer_connection_states_per_thread.lock().unwrap().insert(other_peer.clone(), connection_state.update_choked(PeerChokedState::Unchoked));
+                        } else if message.message_id == PeerMessageId::Piece {
+                            println!("Received: 'piece' from peer {:?}", format::format_as_hex_string(&other_peer.id));
+                            //let piece_blocks_to_download = piece_blocks_to_download_per_thread.lock().unwrap();
+                            let mut remaining_piece_bytes_to_download = remaining_piece_bytes_to_download_per_thread.lock().unwrap();
+                            let mut piece_blocks = piece_blocks_per_thread.lock().unwrap();
+                            let piece_message = message.as_piece().unwrap();
+                            println!("Details about received 'piece': index={:?}  begin={:?} length={:?} from peer {:?}", piece_message.index, piece_message.begin, piece_message.block.len(), format::format_as_hex_string(&other_peer.id));
+                            *remaining_piece_bytes_to_download = *remaining_piece_bytes_to_download - piece_message.block.len();
+                            //println!("Received: 'piece' from peer {:?}", format::format_as_hex_string(&other_peer.id));
+                            //println!("piece_blocks.len() = {}", piece_blocks.len());
+                            //println!("start_index = {}", piece_message.begin);
+                            //println!("end_index = {}", piece_message.begin + piece_message.block.len());
+                            //println!("block.len() = {}", piece_message.block.len());
+                            piece_blocks[piece_message.begin..(piece_message.begin + piece_message.block.len())].copy_from_slice(&piece_message.block);
+                            if *remaining_piece_bytes_to_download == 0 {
+                                //println!("torrent_info_pieces.len() = {}", torrent_info_per_thread.pieces.len());
+                                let expected_piece_hash = torrent_info_per_thread.pieces[piece_index * 20..(piece_index + 1) * 20].to_vec();
+                                let computed_piece_hash = hash::compute_hash(&piece_blocks);
+                                println!("Finished download, expected and computed hashes:");
+                                println!("Expected hash: {}", format::format_as_hex_string(&expected_piece_hash));
+                                println!("Computed hash: {}", format::format_as_hex_string(&computed_piece_hash));
+                                if expected_piece_hash == computed_piece_hash {
+                                    let mut download_finished = download_finished_per_thread.lock().unwrap();
+                                    //Finished downloading the piece successfully
+                                    *download_finished = true;
+                                    println!("Piece {} downloaded to {}.", piece_index, output_file_path_per_thread);
+                                    let mut file = File::create(output_file_path_per_thread.as_str()).unwrap();
+                                    file.write_all(piece_blocks.as_slice()).unwrap();
+                                    break;
+                                } else {
+                                    //Restarting the download of the piece from scratch: something went wrong
+                                    let mut piece_blocks_to_download = piece_blocks_to_download_per_thread.lock().unwrap();
+                                    let mut all_piece_blocks = piece_per_thread.get_blocks(piece_per_thread.piece_length);
+                                    piece_blocks_to_download.append(&mut all_piece_blocks);
+                                    *remaining_piece_bytes_to_download = piece_per_thread.piece_length;
+                                }
                             }
                         }
                     }
