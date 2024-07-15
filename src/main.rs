@@ -255,7 +255,7 @@ fn exchange_messages_with_peer(
                                 PeerMessage::new_request(piece_index, block.begin, block.length)
                             }).collect();
                             for request in next_block_requests {
-                                thread::sleep(std::time::Duration::from_millis(100));
+                                //thread::sleep(std::time::Duration::from_millis(100));
                                 println!("Sending: 'request' {:?} to peer {:?}", &request, format::format_as_hex_string(&other_peer.id));
                                 other_peer_stream.write_all(&request.get_bytes()).unwrap();
                             }
