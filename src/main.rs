@@ -218,6 +218,8 @@ fn exchange_messages_with_peer(
     let other_peer = peer.clone();
     let thread = thread::spawn(move || {
         let mut sending = true;
+        const MAXIMUM_CONCURRENT_REQUEST_COUNT: usize = 5;
+        let mut concurrent_request_count = 0;
         loop {
             {
                 let download_finished = download_finished_per_thread.lock().unwrap();
@@ -244,13 +246,20 @@ fn exchange_messages_with_peer(
                         let next_blocks_to_ask = {
                             let mut piece_blocks_to_download = piece_blocks_to_download_per_thread.lock().unwrap();
                             let remaining_piece_blocks_number = piece_blocks_to_download.len();
-                            let next_piece_blocks_number = min(5, remaining_piece_blocks_number); //request 5 pieces instead?
+                            let remaining_concurrent_requests = if MAXIMUM_CONCURRENT_REQUEST_COUNT >= concurrent_request_count {
+                                MAXIMUM_CONCURRENT_REQUEST_COUNT - concurrent_request_count
+                            } else {
+                                0
+                            };
+                            let next_piece_blocks_number = min(remaining_concurrent_requests, remaining_piece_blocks_number);
+                            //let next_piece_blocks_number = min(1, remaining_piece_blocks_number); // Try not to issue more than one new request per one thread cycle
                             if next_piece_blocks_number == 0 {
                                 Vec::new()
                             } else {
                                 piece_blocks_to_download.drain(0..next_piece_blocks_number).collect()
                             }
                         };
+                        concurrent_request_count = concurrent_request_count + next_blocks_to_ask.len();
                         if next_blocks_to_ask.len() > 0 {
                             let next_block_requests: Vec<PeerMessage> = next_blocks_to_ask.iter().map(|block| {
                                 PeerMessage::new_request(piece_index, block.begin, block.length)
@@ -275,6 +284,11 @@ fn exchange_messages_with_peer(
                             peer_connection_states_per_thread.lock().unwrap().insert(other_peer.clone(), connection_state.update_choked(PeerChokedState::Unchoked));
                         } else if message.message_id == PeerMessageId::Piece {
                             println!("Received: 'piece' from peer {:?}", format::format_as_hex_string(&other_peer.id));
+                            concurrent_request_count = if concurrent_request_count > 1 {
+                                concurrent_request_count - 1
+                            } else {
+                                0
+                            };
                             //let piece_blocks_to_download = piece_blocks_to_download_per_thread.lock().unwrap();
                             let mut remaining_piece_bytes_to_download = remaining_piece_bytes_to_download_per_thread.lock().unwrap();
                             let mut piece_blocks = piece_blocks_per_thread.lock().unwrap();
@@ -317,6 +331,8 @@ fn exchange_messages_with_peer(
             //TODO: Periodically reset the BlockState::Requested state of the blocks to Absent to allow them to be requested from other peers: in case
             //download is taking too much or the peer did not respond with a block
             sending = !sending;
+            /*let sleep_duration = Duration::from_millis(100);
+            thread::sleep(sleep_duration);*/
         }
         0 // result
     });
