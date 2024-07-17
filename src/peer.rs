@@ -232,17 +232,27 @@ impl Peer {
     }
 
     pub(crate) fn read_message(stream: &mut TcpStream) -> Result<Option<PeerMessage>, anyhow::Error> {
-        const DEFAULT_BUFFER_SIZE: usize = 128;//4096;
+        /*
+        let mut message_length_buffer: [u8; 4] = [0u8; 4];
+        stream.read_exact(&mut message_length_buffer)?;
+        let message_length = u32::from_be_bytes(message_length_buffer);
+        
+        let mut message_id_buffer: [u8; 1] = [0u8; 1];
+        stream.read_exact(&mut message_id_buffer)?;
+        let message_type = message_id_buffer[0];
+        */
+
+        const DEFAULT_BUFFER_SIZE: usize = 512;//4096;
         let mut total_bytes_read: usize = 0;
         let mut message_content: Vec<u8> = Vec::new();
         let mut message_length: usize = 0;
         let mut message_type: u8 = 0;
 
-        while message_length == 0 || total_bytes_read < message_length + 4 { //size of the length prefix
+        while message_length == 0 || total_bytes_read < message_length + 5 { //size of the length prefix
             let buffer_size = if message_length == 0 {
                 DEFAULT_BUFFER_SIZE
             } else {
-                let remaining_bytes_to_read = message_length + 4 - total_bytes_read;
+                let remaining_bytes_to_read = message_length + 5 - total_bytes_read;
                 let buffer_size = std::cmp::min(DEFAULT_BUFFER_SIZE, remaining_bytes_to_read);
                 //println!("buffer_size= {}, message_length = {}, remaining_bytes_to_read = {}", buffer_size, message_length, remaining_bytes_to_read);
                 buffer_size
@@ -251,6 +261,9 @@ impl Peer {
             let bytes_read = stream.read(&mut buffer)?;
             //println!("Read {} bytes from the peer", bytes_read);
             if bytes_read == 0 {
+                if message_length != 0 {
+                    println!("Unexpectedly read 0 bytes while reading a message, total_bytes_read = {}, message_length = {}", total_bytes_read, message_length);
+                }
                 return Ok(None);
             } else {
                 if total_bytes_read == 0 {

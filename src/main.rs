@@ -176,8 +176,10 @@ fn main() -> Result<(), anyhow::Error> {
                 break;
             }
             //TODO: Once downloading a piece is completed send a "have" message to the peers
+            //TODO: Receive an interpret "have" messages from the peers
             //TODO: Re-factor and extract the function(s) for downloading the piece to the "peer" module
             //TODO: Send the "bitfield" message to the peers when connecting to them and when a download of each piece is finished
+            //TODO: Download a piece from the peer only if the peer has it according to the bitfield message
             //TODO: Download pieces for the whole file in the random order
             for (_, thread) in peer_threads {
                 thread.join().unwrap();
