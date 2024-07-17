@@ -232,7 +232,7 @@ impl Peer {
     }
 
     pub(crate) fn read_message(stream: &mut TcpStream) -> Result<Option<PeerMessage>, anyhow::Error> {
-        const DEFAULT_BUFFER_SIZE: usize = 512;
+        const DEFAULT_BUFFER_SIZE: usize = 128;//4096;
         let mut total_bytes_read: usize = 0;
         let mut message_content: Vec<u8> = Vec::new();
         let mut message_length: usize = 0;
@@ -249,13 +249,13 @@ impl Peer {
             };
             let mut buffer = vec![0; buffer_size];
             let bytes_read = stream.read(&mut buffer)?;
-            println!("Read {} bytes from the peer", bytes_read);
+            //println!("Read {} bytes from the peer", bytes_read);
             if bytes_read == 0 {
                 return Ok(None);
             } else {
                 if total_bytes_read == 0 {
                     if bytes_read < 5 {
-                        println!("Too few bytes read");
+                        //println!("Too few bytes read");
                         continue;
                     }
                     message_length = (buffer[0] as usize) << 24| (buffer[1] as usize) << 16 | (buffer[2] as usize) << 8 | (buffer[3] as usize);
