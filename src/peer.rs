@@ -3,6 +3,7 @@ use std::io::Read;
 use std::io::Write;
 use std::net::IpAddr;
 use std::net::TcpStream;
+use std::ptr::read;
 use std::str::FromStr;
 use rand::Rng;
 
@@ -79,8 +80,8 @@ impl PeerMessage {
 
     pub(crate) fn get_bytes(self) -> Vec<u8> {
         let mut result: Vec<u8> = Vec::new();
-        let message_length = 1 + self.payload.len(); // message_id takes one byte
-        result.extend((message_length as u32).to_be_bytes());
+        let message_length = 1 + self.payload.len() as u32; // message_id takes one byte
+        result.extend(message_length.to_be_bytes());
         result.push(self.message_id as u8);
         result.extend(self.payload);
         return result;
@@ -90,11 +91,11 @@ impl PeerMessage {
         format!("PeerMessage[{:?}, {:?}]", self.message_id, String::from_utf8(self.payload.clone()))
     }
 
-    pub(crate) fn new_request(index: usize, begin: usize, length: usize) -> PeerMessage {
+    pub(crate) fn new_request(index: u32, begin: u32, length: u32) -> PeerMessage {
         let mut payload: Vec<u8> = Vec::new();
-        payload.extend((index as u32).to_be_bytes());
-        payload.extend((begin as u32).to_be_bytes());
-        payload.extend((length as u32).to_be_bytes());
+        payload.extend(index.to_be_bytes());
+        payload.extend(begin.to_be_bytes());
+        payload.extend(length.to_be_bytes());
         PeerMessage {
             message_id: PeerMessageId::Request,
             payload
@@ -154,14 +155,14 @@ impl PeerConnectionState {
 }
 
 pub(crate) struct Piece {
-    pub(crate) index: usize,
-    pub(crate) piece_length: usize
+    pub(crate) index: u32,
+    pub(crate) piece_length: u32
 }
 
 impl Piece {
-    pub(crate) fn get_blocks(&self, piece_length: usize) -> Vec<PieceBlock> {
+    pub(crate) fn get_blocks(&self, piece_length: u32) -> Vec<PieceBlock> {
         let block_size_bytes = 16 * 1024; // 2^14
-        let mut current_begin_in_piece = 0;
+        let mut current_begin_in_piece: u32 = 0;
         let mut piece_blocks = Vec::new();
         while current_begin_in_piece < piece_length {
             let current_block_length = cmp::min(block_size_bytes, piece_length - current_begin_in_piece);
@@ -178,8 +179,8 @@ impl Piece {
 
 #[derive(Debug)]
 pub(crate) struct PieceBlock {
-    pub(crate) begin: usize,
-    pub(crate) length: usize
+    pub(crate) begin: u32,
+    pub(crate) length: u32
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -232,60 +233,31 @@ impl Peer {
     }
 
     pub(crate) fn read_message(stream: &mut TcpStream) -> Result<Option<PeerMessage>, anyhow::Error> {
-        /*
         let mut message_length_buffer: [u8; 4] = [0u8; 4];
-        stream.read_exact(&mut message_length_buffer)?;
-        let message_length = u32::from_be_bytes(message_length_buffer);
-        
-        let mut message_id_buffer: [u8; 1] = [0u8; 1];
-        stream.read_exact(&mut message_id_buffer)?;
-        let message_type = message_id_buffer[0];
-        */
+        let read_bytes = stream.read(&mut message_length_buffer)?;
 
-        const DEFAULT_BUFFER_SIZE: usize = 512;//4096;
-        let mut total_bytes_read: usize = 0;
-        let mut message_content: Vec<u8> = Vec::new();
-        let mut message_length: usize = 0;
-        let mut message_type: u8 = 0;
-
-        while message_length == 0 || total_bytes_read < message_length + 5 { //size of the length prefix
-            let buffer_size = if message_length == 0 {
-                DEFAULT_BUFFER_SIZE
-            } else {
-                let remaining_bytes_to_read = message_length + 5 - total_bytes_read;
-                let buffer_size = std::cmp::min(DEFAULT_BUFFER_SIZE, remaining_bytes_to_read);
-                //println!("buffer_size= {}, message_length = {}, remaining_bytes_to_read = {}", buffer_size, message_length, remaining_bytes_to_read);
-                buffer_size
-            };
-            let mut buffer = vec![0; buffer_size];
-            let bytes_read = stream.read(&mut buffer)?;
-            //println!("Read {} bytes from the peer", bytes_read);
-            if bytes_read == 0 {
-                if message_length != 0 {
-                    println!("Unexpectedly read 0 bytes while reading a message, total_bytes_read = {}, message_length = {}", total_bytes_read, message_length);
-                }
-                return Ok(None);
-            } else {
-                if total_bytes_read == 0 {
-                    if bytes_read < 5 {
-                        //println!("Too few bytes read");
-                        continue;
-                    }
-                    message_length = (buffer[0] as usize) << 24| (buffer[1] as usize) << 16 | (buffer[2] as usize) << 8 | (buffer[3] as usize);
-                    message_type = buffer[4];
-                    message_content.extend(buffer[5..bytes_read].to_vec());
-                } else {
-                    message_content.extend(buffer[0..bytes_read].to_vec());
-                }
-                //println!("bytes_read = {}, total_bytes_read = {}, message_length_bytes = {}, message_type = {}", bytes_read, total_bytes_read, message_length_bytes, message_type);
-                total_bytes_read = total_bytes_read + bytes_read;
+        if read_bytes < 4 {
+            //println!("Peer did not send a message");
+            if read_bytes > 0 {
+                println!("Received too few bytes from the peer: {} bytes", read_bytes)
             }
+            Ok(None)
+        } else {
+            let message_length = u32::from_be_bytes(message_length_buffer) - 1;
+
+            let mut message_id_buffer: [u8; 1] = [0u8; 1];
+            stream.read_exact(&mut message_id_buffer)?;
+            let message_type = message_id_buffer[0];
+
+            let mut message_content: Vec<u8> = vec![0u8; message_length as usize];
+            if message_length > 0 {
+                stream.read_exact(&mut message_content)?;
+            }
+            Ok(Some(PeerMessage {
+                message_id: PeerMessageId::lookup(message_type)?,
+                payload: message_content
+            }))
         }
-        //println!("full_message_length = {}, total_bytes_read = {}", message_length + 4, total_bytes_read);
-        Ok(Some(PeerMessage {
-            message_id: PeerMessageId::lookup(message_type)?,
-            payload: message_content
-        }))
     }
 }
 
@@ -304,4 +276,19 @@ impl PeerHandshake {
         message.extend_from_slice(&self.peer.id);
         message
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    //TODO: Add a test for the serialization of a Request
+    #[test]
+    fn should_serialize_values_correctly() {
+        let x: i32 = 163840;
+        let y: u32 = 163840;
+        assert_eq!(x.to_be_bytes(), y.to_be_bytes());
+    }
+
+    //TODO: Compare the correctness of the serialization with some other implementation
 }

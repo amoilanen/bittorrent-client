@@ -99,7 +99,7 @@ fn main() -> Result<(), anyhow::Error> {
         } else {
             let output_file_path = &args[3];
             let torrent_file_path = &args[4];
-            let piece_index = args[5].parse::<usize>()?;
+            let piece_index = args[5].parse::<u32>()?;
             println!("Downloading piece {:?} from torrent {:?} to file {:?}", piece_index, torrent_file_path, output_file_path);
 
             let torrent_file_bytes = std::fs::read(torrent_file_path)?;
@@ -131,20 +131,29 @@ fn main() -> Result<(), anyhow::Error> {
 
             let piece_length = torrent.info.piece_length;
             let number_of_pieces = (torrent.info.length.unwrap_or(0) + piece_length - 1) / piece_length;
-            if piece_index >= number_of_pieces {
+            if piece_index >= number_of_pieces as u32 {
                 return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Invalid piece index {:?}, total number of pieces {:?}", piece_index, number_of_pieces)).into())
             }
-            let piece = Piece {
-                index: piece_index,
+            let last_piece_length = torrent.info.length.unwrap_or(0) - piece_length * (number_of_pieces - 1);
+            println!("Piece length: {:?}", piece_length);
+            println!("Last piece length: {:?}", last_piece_length);
+            let piece_length_to_download = if piece_index + 1 == number_of_pieces as u32 {
+                last_piece_length
+            } else {
                 piece_length
             };
-            println!("Piece length: {:?}", piece_length);
+            println!("Piece length to download: {:?}", piece_length_to_download);
+            let piece = Piece {
+                index: piece_index,
+                piece_length: piece_length_to_download as u32
+            };
+
             println!("Total number of pieces to download: {:?}", number_of_pieces);
             let piece_blocks = piece.get_blocks(piece.piece_length);
             println!("Piece blocks {:?}", piece_blocks);
             let piece_blocks_to_download: Arc<Mutex<Vec<PieceBlock>>> = Arc::new(Mutex::new(piece_blocks));
-            let remaining_piece_bytes_to_download = Arc::new(Mutex::new(piece_length));
-            let mut piece_blocks: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(vec![0; piece_length]));
+            let remaining_piece_bytes_to_download = Arc::new(Mutex::new(piece_length_to_download as u32));
+            let mut piece_blocks: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(vec![0; piece_length_to_download]));
             let torrent_info: Arc<TorrentInfo>  = Arc::new(torrent.info);
             let shared_piece: Arc<Piece> = Arc::new(piece);
             let shared_output_file_path: Arc<String> = Arc::new(output_file_path.to_string());
@@ -194,11 +203,11 @@ fn main() -> Result<(), anyhow::Error> {
 
 fn exchange_messages_with_peer(
         download_finished: &Arc<Mutex<bool>>,
-        remaining_piece_bytes_to_download: &Arc<Mutex<usize>>,
+        remaining_piece_bytes_to_download: &Arc<Mutex<u32>>,
         output_file_path: &Arc<String>,
         torrent_info: &Arc<TorrentInfo>,
         piece: &Arc<Piece>,
-        piece_index: usize,
+        piece_index: u32,
         peer: &peer::Peer,
         mut other_peer_stream: TcpStream,
         piece_blocks_to_download: &Arc<Mutex<Vec<PieceBlock>>>,
@@ -269,7 +278,9 @@ fn exchange_messages_with_peer(
                             for request in next_block_requests {
                                 //thread::sleep(std::time::Duration::from_millis(100));
                                 println!("Sending: 'request' {:?} to peer {:?}", &request, format::format_as_hex_string(&other_peer.id));
-                                other_peer_stream.write_all(&request.get_bytes()).unwrap();
+                                let request_bytes = request.get_bytes();
+                                println!("Request: {:?}", request_bytes);
+                                other_peer_stream.write_all(&request_bytes).unwrap();
                             }
                         }
                     }
@@ -296,7 +307,7 @@ fn exchange_messages_with_peer(
                             let mut piece_blocks = piece_blocks_per_thread.lock().unwrap();
                             let piece_message = message.as_piece().unwrap();
                             println!("Details about received 'piece': index={:?}  begin={:?} length={:?} from peer {:?}", piece_message.index, piece_message.begin, piece_message.block.len(), format::format_as_hex_string(&other_peer.id));
-                            *remaining_piece_bytes_to_download = *remaining_piece_bytes_to_download - piece_message.block.len();
+                            *remaining_piece_bytes_to_download = *remaining_piece_bytes_to_download - (piece_message.block.len() as u32);
                             //println!("Received: 'piece' from peer {:?}", format::format_as_hex_string(&other_peer.id));
                             //println!("piece_blocks.len() = {}", piece_blocks.len());
                             //println!("start_index = {}", piece_message.begin);
@@ -305,7 +316,7 @@ fn exchange_messages_with_peer(
                             piece_blocks[piece_message.begin..(piece_message.begin + piece_message.block.len())].copy_from_slice(&piece_message.block);
                             if *remaining_piece_bytes_to_download == 0 {
                                 //println!("torrent_info_pieces.len() = {}", torrent_info_per_thread.pieces.len());
-                                let expected_piece_hash = torrent_info_per_thread.pieces[piece_index * 20..(piece_index + 1) * 20].to_vec();
+                                let expected_piece_hash = torrent_info_per_thread.pieces[(piece_index as usize) * 20..((piece_index as usize) + 1) * 20].to_vec();
                                 let computed_piece_hash = hash::compute_hash(&piece_blocks);
                                 println!("Finished download, expected and computed hashes:");
                                 println!("Expected hash: {}", format::format_as_hex_string(&expected_piece_hash));
@@ -333,8 +344,8 @@ fn exchange_messages_with_peer(
             //TODO: Periodically reset the BlockState::Requested state of the blocks to Absent to allow them to be requested from other peers: in case
             //download is taking too much or the peer did not respond with a block
             sending = !sending;
-            /*let sleep_duration = Duration::from_millis(100);
-            thread::sleep(sleep_duration);*/
+            let sleep_duration = Duration::from_millis(100);
+            thread::sleep(sleep_duration);
         }
         0 // result
     });
