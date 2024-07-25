@@ -3,7 +3,6 @@ use std::io::Read;
 use std::io::Write;
 use std::net::IpAddr;
 use std::net::TcpStream;
-use std::ptr::read;
 use std::str::FromStr;
 use rand::Rng;
 
@@ -49,13 +48,13 @@ impl PeerMessageId {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct PeerMessage {
     pub(crate) message_id: PeerMessageId,
     pub(crate) payload: Vec<u8>
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct PiecePeerMessage {
     pub(crate)  message_id: PeerMessageId,
     pub(crate)  index: usize,
@@ -102,7 +101,7 @@ impl PeerMessage {
         }
     }
 
-    pub(crate) fn as_piece(&self) -> Result<PiecePeerMessage, anyhow::Error> {
+    pub(crate) fn parse_as_piece(&self) -> Result<PiecePeerMessage, anyhow::Error> {
         if self.payload.len() < 8 {
             Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Not enough bytes in the 'piece' message {:?}", self.payload)).into())
         } else {
@@ -219,7 +218,7 @@ pub(crate) struct Peer {
 impl Peer {
     pub(crate) fn handshake(peer_address: &PeerAddress, request: &PeerHandshake) -> Result<(PeerHandshake, TcpStream), anyhow::Error> {
         let mut stream = TcpStream::connect(format!("{}:{}", peer_address.address.to_string(), peer_address.port.to_string()))?;
-        stream.write_all(&request.to_message())?;
+        stream.write_all(&request.get_bytes())?;
 
         let mut response_buffer: [u8; 68] = [0; 68]; //1 + 19 + 8 + 20 + 20
         stream.read(&mut response_buffer)?;
@@ -232,7 +231,7 @@ impl Peer {
         }, stream))
     }
 
-    pub(crate) fn read_message(stream: &mut TcpStream) -> Result<Option<PeerMessage>, anyhow::Error> {
+    pub(crate) fn read_message(stream: &mut impl Read) -> Result<Option<PeerMessage>, anyhow::Error> {
         let mut message_length_buffer: [u8; 4] = [0u8; 4];
         let read_bytes = stream.read(&mut message_length_buffer)?;
 
@@ -267,7 +266,7 @@ pub(crate) struct PeerHandshake {
 }
 
 impl PeerHandshake {
-    pub(crate) fn to_message(&self) -> Vec<u8> {
+    pub(crate) fn get_bytes(&self) -> Vec<u8> {
         let mut message: Vec<u8> = Vec::new();
         message.push(19);
         message.extend_from_slice("BitTorrent protocol".as_bytes());
@@ -281,14 +280,101 @@ impl PeerHandshake {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{self, Read};
 
-    //TODO: Add a test for the serialization of a Request
-    #[test]
-    fn should_serialize_values_correctly() {
-        let x: i32 = 163840;
-        let y: u32 = 163840;
-        assert_eq!(x.to_be_bytes(), y.to_be_bytes());
+    struct InMemoryTcpStream {
+        bytes: Vec<u8>,
+        length: usize,
+        cursor: usize,
     }
 
-    //TODO: Compare the correctness of the serialization with some other implementation
+    impl InMemoryTcpStream {
+        fn from_bytes (bytes: Vec<u8>) -> Self {
+            let length = bytes.len();
+            InMemoryTcpStream { bytes, length, cursor: 0 }
+        }
+    }
+
+    impl Read for InMemoryTcpStream {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let bytes_to_read = buf.len().min(self.length - self.cursor);
+            if bytes_to_read > 0 {
+                buf[0..bytes_to_read].copy_from_slice(&self.bytes[self.cursor..(self.cursor + bytes_to_read)]);
+                self.cursor = self.cursor + bytes_to_read;
+            }
+            Ok(bytes_to_read)
+        }
+    }
+
+    #[test]
+    fn should_read_bitfield_message_from_peer() {
+        let mut stream = InMemoryTcpStream::from_bytes(vec![
+            0, 0, 0, 4,   // message length prefix - 4
+            5,             // message id byte - 5 “bitfield”
+            255, 248, 128
+        ]);
+        let message = Peer::read_message(&mut stream).unwrap();
+        assert_eq!(message, Some(PeerMessage::new(PeerMessageId::Bitfield, vec![255, 248, 128])))
+    }
+
+    #[test]
+    fn should_read_unchoke_message_from_peer() {
+        let mut stream = InMemoryTcpStream::from_bytes(vec![
+            0, 0, 0, 1,   // message length prefix - 1
+            1,            // message id byte - 1 “unchoke”
+        ]);
+        let message = Peer::read_message(&mut stream).unwrap();
+        assert_eq!(message, Some(PeerMessage::new(PeerMessageId::Unchoke, Vec::new())))
+    }
+
+    #[test]
+    fn should_read_piece_message_from_peer() {
+        let mut stream = InMemoryTcpStream::from_bytes(vec![
+            0, 0, 0, 21,    // message length prefix - 1
+            7,             // message id byte - 1 “unchoke”
+            0, 0, 0, 1,    // piece index - 1
+            0, 2, 128, 0,  // begin - 163840
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 // piece block content
+        ]);
+        let message = Peer::read_message(&mut stream).unwrap().unwrap();
+        let piece_message = message.parse_as_piece().unwrap();
+        assert_eq!(piece_message, PiecePeerMessage {
+            message_id: PeerMessageId::Piece,
+            index: 1,
+            begin: 163840,
+            block: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        })
+    }
+
+    #[test]
+    fn should_serialize_peer_handshake_message_correctly() {
+        let peer_handshake = PeerHandshake {
+            info_hash: vec![1, 2, 3, 4],
+            peer: Peer {
+                id: vec![5, 6, 7, 8]
+            }
+        };
+        assert_eq!(peer_handshake.get_bytes(), vec![
+            19, // length of the protocol string which follows - 19
+            66, 105, 116, 84, 111, 114, 114, 101, 110, 116, 32, 112, 114, 111, 116, 111, 99, 111, 108, // protocol string:"BitTorrent protocol"
+            0, 0, 0, 0, 0, 0, 0, 0, // reserved 8 bytes
+            1, 2, 3, 4, // info_hash bytes
+            5, 6, 7, 8 // peer id bytes
+        ]);
+    }
+
+    #[test]
+    fn should_serialize_request_message_correctly() {
+        let request = PeerMessage::new_request(11, 163840, 16384);
+        assert_eq!(request.get_bytes(), vec![
+            0, 0, 0, 13,   // message length prefix - 13
+            6,             // message id byte - 6 “request”
+            0, 0, 0, 11,   // piece index - 11
+            0, 2, 128, 0,  // begin - 163840
+            0, 0, 64, 0    // length - 16384
+        ]);
+    }
+
+    //TODO: parse_as_piece
+    //TODO: PeerAddress::from_str
 }

@@ -305,7 +305,7 @@ fn exchange_messages_with_peer(
                             //let piece_blocks_to_download = piece_blocks_to_download_per_thread.lock().unwrap();
                             let mut remaining_piece_bytes_to_download = remaining_piece_bytes_to_download_per_thread.lock().unwrap();
                             let mut piece_blocks = piece_blocks_per_thread.lock().unwrap();
-                            let piece_message = message.as_piece().unwrap();
+                            let piece_message = message.parse_as_piece().unwrap();
                             println!("Details about received 'piece': index={:?}  begin={:?} length={:?} from peer {:?}", piece_message.index, piece_message.begin, piece_message.block.len(), format::format_as_hex_string(&other_peer.id));
                             *remaining_piece_bytes_to_download = *remaining_piece_bytes_to_download - (piece_message.block.len() as u32);
                             //println!("Received: 'piece' from peer {:?}", format::format_as_hex_string(&other_peer.id));
