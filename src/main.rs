@@ -20,79 +20,38 @@ mod url;
 mod peer;
 mod hash;
 
+fn parse_torrent(torrent_file_path: &str) -> Result<torrent::Torrent, anyhow::Error> {
+    let torrent_file_bytes = std::fs::read(torrent_file_path)?;
+    torrent::Torrent::from_bytes(&torrent_file_bytes)
+}
+
+fn join_swarm(current_peer_id: &str, port: usize, torrent: &torrent::Torrent) -> Result<Vec<peer::PeerAddress>, anyhow::Error> {
+    let torrent_hash = torrent.info.compute_hash();
+    let tracker = tracker::Tracker { url: torrent.announce.clone() };
+
+    let request = tracker::TrackerRequest {
+        peer_id: current_peer_id.to_string(),
+        info_hash: url::url_encode_bytes(&torrent_hash),
+        port,
+        uploaded: 0,
+        downloaded: 0,
+        left: torrent.info.length.unwrap_or(0) as u64,
+        compact: true
+    };
+    let response = tracker.get(&request)?;
+    response.get_peer_addresses()
+}
+
 // Usage: your_bittorrent.sh decode "<encoded_value>"
 fn main() -> Result<(), anyhow::Error> {
-    let args: Vec<String> = env::args().collect();
-    let command = &args[1];
-    //let command = "download_piece";
-    //let args: Vec<String> = vec!["", "", "-o", "/tmp/test-piece-0", "sample.torrent", "0"].iter().map(|x| x.to_string()).collect();
+    //let args: Vec<String> = env::args().collect();
+    //let command = &args[1];
+    let command = "download_piece";
+    let args: Vec<String> = vec!["", "", "-o", "/tmp/test-piece-0", "sample.torrent", "0"].iter().map(|x| x.to_string()).collect();
+    //let command = "download";
+    //let args: Vec<String> = vec!["", "", "-o", "/tmp/test.txt", "sample.torrent"].iter().map(|x| x.to_string()).collect();
 
-    if command == "decode" {
-        let encoded_value = &args[2];
-        let decoded_value = bencoded::decode_bencoded_from_str(&encoded_value)?.as_json();
-        println!("{}", decoded_value.to_string());
-        Ok(())
-    } else if command == "info" {
-        let torrent_file_path = &args[2];
-        //let torrent_file_path = "sample.torrent";
-        println!("torrent_file_path: {}", torrent_file_path);
-        let torrent_file_bytes = std::fs::read(torrent_file_path)?;
-        let torrent = torrent::Torrent::from_bytes(&torrent_file_bytes)?;
-        println!("Torrent file: {:?}", torrent);
-        println!("Tracker URL: {}", torrent.announce);
-        println!("Length: {}", torrent.info.length.unwrap_or(0));
-        println!("Info Hash: {}", format::format_as_hex_string(&torrent.info.compute_hash()));
-        println!("Piece Length: {}", torrent.info.piece_length);
-        println!("Piece Hashes:");
-        for piece_hash in torrent.info.piece_hashes() {
-            println!("{}", format::format_as_hex_string(piece_hash))
-        }
-        Ok(())
-    } else if command == "peers" {
-        let torrent_file_path = &args[2];
-        //let torrent_file_path = "sample.torrent";
-        println!("torrent_file_path: {}", torrent_file_path);
-        let torrent_file_bytes = std::fs::read(torrent_file_path)?;
-        let torrent = torrent::Torrent::from_bytes(&torrent_file_bytes)?;
-
-        let current_peer_id = peer::random_peer_id();
-        let torrent_hash = torrent.info.compute_hash();
-        let port = 6881;
-        let tracker = tracker::Tracker { url: torrent.announce };
-
-        let request = tracker::TrackerRequest {
-            peer_id: current_peer_id,
-            info_hash: url::url_encode_bytes(&torrent_hash),
-            port,
-            uploaded: 0,
-            downloaded: 0,
-            left: torrent.info.length.unwrap_or(0) as u64,
-            compact: true
-        };
-        let response = tracker.get(&request)?;
-        for peer in response.get_peer_addresses()? {
-            println!("{}:{}", peer.address, peer.port)
-        }
-        Ok(())
-    } else if command == "handshake" {
-        let torrent_file_path = &args[2];
-        let other_peer_address = PeerAddress::from_str(&args[3])?;
-        let torrent_file_bytes = std::fs::read(torrent_file_path)?;
-        let torrent = torrent::Torrent::from_bytes(&torrent_file_bytes)?;
-
-        let current_peer_id = peer::random_peer_id();
-        let torrent_hash = torrent.info.compute_hash();
-
-        let current_peer_handshake = peer::PeerHandshake {
-            info_hash: torrent_hash,
-            peer: peer::Peer {
-                id: current_peer_id.as_bytes().to_vec()
-            }
-        };
-        let (other_peer_handshake, _) = peer::Peer::handshake(&other_peer_address, &current_peer_handshake)?;
-        println!("Peer ID: {}", format::format_as_hex_string(&other_peer_handshake.peer.id));
-        Ok(())
-    } else if command == "download_piece" {
+    if command == "download_piece" {
         let option = &args[2];
         if option != "-o" {
             Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Unexpected arguments, did not find -o, {:?}", &args)).into())
@@ -102,32 +61,11 @@ fn main() -> Result<(), anyhow::Error> {
             let piece_index = args[5].parse::<u32>()?;
             println!("Downloading piece {:?} from torrent {:?} to file {:?}", piece_index, torrent_file_path, output_file_path);
 
-            let torrent_file_bytes = std::fs::read(torrent_file_path)?;
-            let torrent = torrent::Torrent::from_bytes(&torrent_file_bytes)?;
-
+            let torrent = parse_torrent(torrent_file_path)?;
             let current_peer_id = peer::random_peer_id();
-            let torrent_hash = torrent.info.compute_hash();
             let port = 6881;
-            let tracker = tracker::Tracker { url: torrent.announce };
-
-            let request = tracker::TrackerRequest {
-                peer_id: current_peer_id.clone(),
-                info_hash: url::url_encode_bytes(&torrent_hash),
-                port,
-                uploaded: 0,
-                downloaded: 0,
-                left: torrent.info.length.unwrap_or(0) as u64,
-                compact: true
-            };
-            let response = tracker.get(&request)?;
+            let peer_addresses = join_swarm(&current_peer_id, port,&torrent)?;
             let mut peer_threads: HashMap<Peer, JoinHandle<i32>> = HashMap::new();
-
-            let current_peer_handshake = peer::PeerHandshake {
-                info_hash: torrent_hash,
-                peer: peer::Peer {
-                    id: current_peer_id.as_bytes().to_vec()
-                }
-            };
 
             let piece_length = torrent.info.piece_length;
             let number_of_pieces = (torrent.info.length.unwrap_or(0) + piece_length - 1) / piece_length;
@@ -154,22 +92,23 @@ fn main() -> Result<(), anyhow::Error> {
             let piece_blocks_to_download: Arc<Mutex<Vec<PieceBlock>>> = Arc::new(Mutex::new(piece_blocks));
             let remaining_piece_bytes_to_download = Arc::new(Mutex::new(piece_length_to_download as u32));
             let mut piece_blocks: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(vec![0; piece_length_to_download]));
-            let torrent_info: Arc<TorrentInfo>  = Arc::new(torrent.info);
             let shared_piece: Arc<Piece> = Arc::new(piece);
             let shared_output_file_path: Arc<String> = Arc::new(output_file_path.to_string());
             let mut peer_bitfields: Arc<Mutex<HashMap<Peer, Vec<u8>>>>= Arc::new(Mutex::new(HashMap::new()));
             let mut peer_connection_states: Arc<Mutex<HashMap<Peer, PeerConnectionState>>> = Arc::new(Mutex::new(HashMap::new()));
             let download_finished: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
 
-            for other_peer_address in response.get_peer_addresses()? {
-                let (other_peer_handshake, other_peer_stream) = peer::Peer::handshake(&other_peer_address, &current_peer_handshake)?;
+            for other_peer_address in peer_addresses {
+                let (other_peer_handshake, other_peer_stream) = peer::Peer::handshake_for_peer(&other_peer_address, &torrent.info, &current_peer_id)?;
+
+                let shared_torrent_info: Arc<TorrentInfo>  = Arc::new(torrent.info);
                 //other_peer_stream.set_read_timeout(Some(Duration::new(5, 0)))?;
                 println!("Established connection to peer {:?} peer address {:?}", format::format_as_hex_string(&other_peer_handshake.peer.id), &other_peer_address);
                 let peer_thread = exchange_messages_with_peer(
                     &download_finished,
                     &remaining_piece_bytes_to_download,
                     &shared_output_file_path,
-                    &torrent_info,
+                    &shared_torrent_info,
                     &shared_piece,
                     piece_index,
                     &other_peer_handshake.peer,
@@ -217,6 +156,8 @@ fn exchange_messages_with_peer(
     {
         peer_connection_states.lock().unwrap().insert(peer.clone(), PeerConnectionState::initial());
     }
+    const MAXIMUM_CONCURRENT_REQUEST_COUNT: usize = 5;
+
     let download_finished_per_thread = Arc::clone(download_finished);
     let remaining_piece_bytes_to_download_per_thread = Arc::clone(remaining_piece_bytes_to_download);
     let torrent_info_per_thread = Arc::clone(torrent_info);
@@ -229,7 +170,6 @@ fn exchange_messages_with_peer(
     let other_peer = peer.clone();
     let thread = thread::spawn(move || {
         let mut sending = true;
-        const MAXIMUM_CONCURRENT_REQUEST_COUNT: usize = 5;
         let mut concurrent_request_count = 0;
         loop {
             {
@@ -263,7 +203,6 @@ fn exchange_messages_with_peer(
                                 0
                             };
                             let next_piece_blocks_number = min(remaining_concurrent_requests, remaining_piece_blocks_number);
-                            //let next_piece_blocks_number = min(1, remaining_piece_blocks_number); // Try not to issue more than one new request per one thread cycle
                             if next_piece_blocks_number == 0 {
                                 Vec::new()
                             } else {

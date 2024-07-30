@@ -6,6 +6,9 @@ use std::net::TcpStream;
 use std::str::FromStr;
 use rand::Rng;
 
+use crate::torrent;
+use crate::peer;
+
 fn generate_random_number_string(length: usize) -> String {
     let mut rng = rand::thread_rng();
     (0..length)
@@ -216,7 +219,19 @@ pub(crate) struct Peer {
 }
 
 impl Peer {
-    pub(crate) fn handshake(peer_address: &PeerAddress, request: &PeerHandshake) -> Result<(PeerHandshake, TcpStream), anyhow::Error> {
+
+    pub(crate) fn handshake_for_peer(peer_address: &PeerAddress, torrent_info: &torrent::TorrentInfo, current_peer_id: &str) -> Result<(PeerHandshake, TcpStream), anyhow::Error> {
+        let torrent_hash = torrent_info.compute_hash();
+        let current_peer_handshake = peer::PeerHandshake {
+            info_hash: torrent_hash,
+            peer: peer::Peer {
+                id: current_peer_id.as_bytes().to_vec()
+            }
+        };
+        Peer::handshake(peer_address, &current_peer_handshake)
+    }
+
+    fn handshake(peer_address: &PeerAddress, request: &PeerHandshake) -> Result<(PeerHandshake, TcpStream), anyhow::Error> {
         let mut stream = TcpStream::connect(format!("{}:{}", peer_address.address.to_string(), peer_address.port.to_string()))?;
         stream.write_all(&request.get_bytes())?;
 
@@ -377,4 +392,5 @@ mod tests {
 
     //TODO: parse_as_piece
     //TODO: PeerAddress::from_str
+    //TODO: Piece::get_blocks
 }

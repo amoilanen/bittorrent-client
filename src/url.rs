@@ -4,3 +4,5 @@ pub(crate) fn url_encode_bytes(bytes: &[u8]) -> String {
         .collect();
     encoded_bytes.join("")
 }
+
+//TODO: Add tests

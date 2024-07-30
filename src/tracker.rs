@@ -36,6 +36,7 @@ impl TrackerResponse {
 }
 
 impl Tracker {
+
     pub(crate) fn get(&self, request: &TrackerRequest) -> Result<TrackerResponse, anyhow::Error> {
         let client = reqwest::blocking::Client::new();
         let rest_of_params = [
@@ -65,3 +66,5 @@ impl Tracker {
         }
     }
 }
+
+//TODO: Add tests

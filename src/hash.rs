@@ -6,3 +6,5 @@ pub(crate) fn compute_hash(input: &Vec<u8>) -> Vec<u8> {
     hasher.update(input);
     hasher.finalize().to_vec()
 }
+
+//TODO: Add tests
