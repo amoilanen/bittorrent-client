@@ -23,6 +23,25 @@ impl TorrentInfo {
         self.pieces.chunks(TorrentInfo::PIECE_HASH_SIZE).collect()
     }
 
+    pub(crate) fn total_piece_number(&self) -> usize {
+        let piece_length = self.piece_length;
+        (self.length.unwrap_or(0) + piece_length - 1) / piece_length
+    }
+
+    pub(crate) fn piece_length(&self, piece_index: u32) -> Result<u32, anyhow::Error> {
+        let total_piece_number = self.total_piece_number();
+        if piece_index >= total_piece_number as u32 {
+            return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Invalid piece index {:?}, total number of pieces {:?}", piece_index, total_piece_number)).into())
+        } else {
+            if piece_index + 1 == total_piece_number as u32 {
+                let last_piece_length = self.length.unwrap_or(0) - self.piece_length * (total_piece_number - 1);
+                Ok(last_piece_length as u32)
+            } else {
+                Ok(self.piece_length as u32)
+            }
+        }
+    }
+
     pub(crate) fn bencode(&self) -> Vec<u8> {
         let mut bencoded: Vec<u8> = Vec::new();
         bencoded.push(b'd');
@@ -91,6 +110,11 @@ impl Torrent {
                 }
             }
         })
+    }
+
+    pub fn parse_torrent(torrent_file_path: &str) -> Result<Torrent, anyhow::Error> {
+        let torrent_file_bytes = std::fs::read(torrent_file_path)?;
+        Torrent::from_bytes(&torrent_file_bytes)
     }
 }
 

@@ -1,4 +1,3 @@
-use std::env;
 use std::fs::File;
 use std::io::Write;
 use std::net::TcpStream;
@@ -8,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::cmp::min;
 use anyhow::Result;
-use peer::{ Peer, PeerAddress, PeerChokedState, PeerConnectionState, PeerInterestedState, PeerMessage, PeerMessageId, Piece, PieceBlock };
+use peer::{ Peer, PeerChokedState, PeerConnectionState, PeerInterestedState, PeerMessage, PeerMessageId, Piece, PieceBlock };
 use torrent::TorrentInfo;
 use std::collections::HashMap;
 
@@ -19,28 +18,6 @@ mod tracker;
 mod url;
 mod peer;
 mod hash;
-
-fn parse_torrent(torrent_file_path: &str) -> Result<torrent::Torrent, anyhow::Error> {
-    let torrent_file_bytes = std::fs::read(torrent_file_path)?;
-    torrent::Torrent::from_bytes(&torrent_file_bytes)
-}
-
-fn join_swarm(current_peer_id: &str, port: usize, torrent: &torrent::Torrent) -> Result<Vec<peer::PeerAddress>, anyhow::Error> {
-    let torrent_hash = torrent.info.compute_hash();
-    let tracker = tracker::Tracker { url: torrent.announce.clone() };
-
-    let request = tracker::TrackerRequest {
-        peer_id: current_peer_id.to_string(),
-        info_hash: url::url_encode_bytes(&torrent_hash),
-        port,
-        uploaded: 0,
-        downloaded: 0,
-        left: torrent.info.length.unwrap_or(0) as u64,
-        compact: true
-    };
-    let response = tracker.get(&request)?;
-    response.get_peer_addresses()
-}
 
 // Usage: your_bittorrent.sh decode "<encoded_value>"
 fn main() -> Result<(), anyhow::Error> {
@@ -61,37 +38,23 @@ fn main() -> Result<(), anyhow::Error> {
             let piece_index = args[5].parse::<u32>()?;
             println!("Downloading piece {:?} from torrent {:?} to file {:?}", piece_index, torrent_file_path, output_file_path);
 
-            let torrent = parse_torrent(torrent_file_path)?;
+            let torrent = torrent::Torrent::parse_torrent(torrent_file_path)?;
             let current_peer_id = peer::random_peer_id();
             let port = 6881;
-            let peer_addresses = join_swarm(&current_peer_id, port,&torrent)?;
+            let peer_addresses = tracker::Tracker::join_swarm(&current_peer_id, port,&torrent)?;
             let mut peer_threads: HashMap<Peer, JoinHandle<i32>> = HashMap::new();
 
-            let piece_length = torrent.info.piece_length;
-            let number_of_pieces = (torrent.info.length.unwrap_or(0) + piece_length - 1) / piece_length;
-            if piece_index >= number_of_pieces as u32 {
-                return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Invalid piece index {:?}, total number of pieces {:?}", piece_index, number_of_pieces)).into())
-            }
-            let last_piece_length = torrent.info.length.unwrap_or(0) - piece_length * (number_of_pieces - 1);
-            println!("Piece length: {:?}", piece_length);
-            println!("Last piece length: {:?}", last_piece_length);
-            let piece_length_to_download = if piece_index + 1 == number_of_pieces as u32 {
-                last_piece_length
-            } else {
-                piece_length
-            };
-            println!("Piece length to download: {:?}", piece_length_to_download);
+            let piece_length_to_download = torrent.info.piece_length(piece_index)?;
             let piece = Piece {
                 index: piece_index,
-                piece_length: piece_length_to_download as u32
+                piece_length: piece_length_to_download
             };
 
-            println!("Total number of pieces to download: {:?}", number_of_pieces);
             let piece_blocks = piece.get_blocks(piece.piece_length);
             println!("Piece blocks {:?}", piece_blocks);
             let piece_blocks_to_download: Arc<Mutex<Vec<PieceBlock>>> = Arc::new(Mutex::new(piece_blocks));
             let remaining_piece_bytes_to_download = Arc::new(Mutex::new(piece_length_to_download as u32));
-            let mut piece_blocks: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(vec![0; piece_length_to_download]));
+            let mut piece_blocks: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(vec![0; piece_length_to_download as usize]));
             let shared_piece: Arc<Piece> = Arc::new(piece);
             let shared_output_file_path: Arc<String> = Arc::new(output_file_path.to_string());
             let mut peer_bitfields: Arc<Mutex<HashMap<Peer, Vec<u8>>>>= Arc::new(Mutex::new(HashMap::new()));
@@ -123,12 +86,12 @@ fn main() -> Result<(), anyhow::Error> {
                 //Downloading from multiple peers should also work as expected, gracefully terminate the remaining threads
                 break;
             }
+            //TODO: Download a piece from the peer only if the peer has it according to the bitfield message
+            //TODO: Download pieces for the whole file in the random order
             //TODO: Once downloading a piece is completed send a "have" message to the peers
             //TODO: Receive an interpret "have" messages from the peers
             //TODO: Re-factor and extract the function(s) for downloading the piece to the "peer" module
             //TODO: Send the "bitfield" message to the peers when connecting to them and when a download of each piece is finished
-            //TODO: Download a piece from the peer only if the peer has it according to the bitfield message
-            //TODO: Download pieces for the whole file in the random order
             for (_, thread) in peer_threads {
                 thread.join().unwrap();
             }
@@ -194,6 +157,7 @@ fn exchange_messages_with_peer(
                         }
                         println!("Sent: 'interested' to peer {:?}", format::format_as_hex_string(&other_peer.id));
                     } else if connection_state.choked == PeerChokedState::Unchoked {
+                        //TODO: Check that the peer actually has the piece
                         let next_blocks_to_ask = {
                             let mut piece_blocks_to_download = piece_blocks_to_download_per_thread.lock().unwrap();
                             let remaining_piece_blocks_number = piece_blocks_to_download.len();

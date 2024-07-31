@@ -1,6 +1,9 @@
 use std::net::{ Ipv4Addr, IpAddr };
 use crate::bencoded;
-use crate::peer::PeerAddress;
+use crate::torrent;
+use crate::tracker;
+use crate::peer;
+use crate::url;
 
 pub(crate) struct TrackerResponse {
     interval: u32,
@@ -22,12 +25,12 @@ pub(crate) struct TrackerRequest {
 }
 
 impl TrackerResponse {
-    pub(crate) fn get_peer_addresses(&self) -> Result<Vec<PeerAddress>, anyhow::Error> {
+    pub(crate) fn get_peer_addresses(&self) -> Result<Vec<peer::PeerAddress>, anyhow::Error> {
         if self.peers.len() % 6 == 0 {
             Ok(self.peers.chunks(6).into_iter().map(|peer| {
                 let address = IpAddr::V4(Ipv4Addr::new(peer[0], peer[1], peer[2], peer[3]));
                 let port = (peer[5] as u16) | (peer[4] as u16) << 8;
-                PeerAddress { address, port }
+                peer::PeerAddress { address, port }
             }).collect())
         } else {
             Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Peers field size is not a multiple of 6, {:?}", self.peers)).into())
@@ -36,6 +39,23 @@ impl TrackerResponse {
 }
 
 impl Tracker {
+
+    pub(crate) fn join_swarm(current_peer_id: &str, port: usize, torrent: &torrent::Torrent) -> Result<Vec<peer::PeerAddress>, anyhow::Error> {
+        let torrent_hash = torrent.info.compute_hash();
+        let tracker = tracker::Tracker { url: torrent.announce.clone() };
+    
+        let request = tracker::TrackerRequest {
+            peer_id: current_peer_id.to_string(),
+            info_hash: url::url_encode_bytes(&torrent_hash),
+            port,
+            uploaded: 0,
+            downloaded: 0,
+            left: torrent.info.length.unwrap_or(0) as u64,
+            compact: true
+        };
+        let response = tracker.get(&request)?;
+        response.get_peer_addresses()
+    }
 
     pub(crate) fn get(&self, request: &TrackerRequest) -> Result<TrackerResponse, anyhow::Error> {
         let client = reqwest::blocking::Client::new();
