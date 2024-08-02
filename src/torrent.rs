@@ -1,5 +1,6 @@
 use anyhow::Result;
 use crate::bencoded::BencodeEncoding;
+use crate::peer;
 
 #[derive(Debug, PartialEq)]
 pub struct TorrentFileInfo {
@@ -28,7 +29,18 @@ impl TorrentInfo {
         (self.length.unwrap_or(0) + piece_length - 1) / piece_length
     }
 
-    pub(crate) fn piece_length(&self, piece_index: u32) -> Result<u32, anyhow::Error> {
+    pub(crate) fn get_all_pieces(&self) -> Vec<peer::Piece> {
+        (0..self.total_piece_number()).map(|piece_index| {
+            let piece_length_to_download = self.piece_length_at_index(piece_index as u32).unwrap();
+            let piece = peer::Piece {
+                index: piece_index as u32,
+                piece_length: piece_length_to_download
+            };
+            piece
+        }).collect()
+    }
+
+    pub(crate) fn piece_length_at_index(&self, piece_index: u32) -> Result<u32, anyhow::Error> {
         let total_piece_number = self.total_piece_number();
         if piece_index >= total_piece_number as u32 {
             return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Invalid piece index {:?}, total number of pieces {:?}", piece_index, total_piece_number)).into())
@@ -71,6 +83,7 @@ pub struct Torrent {
 }
 
 impl Torrent {
+
     pub fn from_bytes(torrent_bytes: &Vec<u8>) -> Result<Torrent, anyhow::Error> {
         let chars: Vec<char> = torrent_bytes.iter().map(|b| *b as char).collect();
         let decoded = crate::bencoded::decode_bencoded(&chars)?;

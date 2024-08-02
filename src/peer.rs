@@ -156,6 +156,7 @@ impl PeerConnectionState {
     }
 }
 
+#[derive(PartialEq, Clone)]
 pub(crate) struct Piece {
     pub(crate) index: u32,
     pub(crate) piece_length: u32
@@ -229,6 +230,16 @@ impl Peer {
             }
         };
         Peer::handshake(peer_address, &current_peer_handshake)
+    }
+
+    pub(crate) fn get_piece_indices(bitfield: &Vec<u8>) -> Vec<usize> {
+        let all_indices = 0..bitfield.len() * 8;
+        all_indices.filter(|index| {
+            let bitfield_index = index / 8;
+            let bitfield_bits = bitfield[bitfield_index];
+            let index_bits: u8 = 1 << (7 - (index % 8));
+            bitfield_bits & index_bits != 0
+        }).collect()
     }
 
     fn handshake(peer_address: &PeerAddress, request: &PeerHandshake) -> Result<(PeerHandshake, TcpStream), anyhow::Error> {
@@ -388,6 +399,19 @@ mod tests {
             0, 2, 128, 0,  // begin - 163840
             0, 0, 64, 0    // length - 16384
         ]);
+    }
+
+    #[test]
+    fn should_compute_piece_indices_from_bitfield() {
+        fn as_byte(binary_str: &str) -> u8 {
+            u8::from_str_radix(binary_str, 2).unwrap()
+        }
+
+        assert_eq!(Peer::get_piece_indices(&Vec::new()), Vec::<usize>::new());
+        assert_eq!(Peer::get_piece_indices(&vec![as_byte("01010000")]), vec![1, 3]);
+        assert_eq!(Peer::get_piece_indices(&vec![
+            as_byte("00100010"), as_byte("11110000"), as_byte("10101010")
+        ]), vec![2, 6, 8, 9, 10, 11, 16, 18, 20, 22]);
     }
 
     //TODO: parse_as_piece
