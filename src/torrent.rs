@@ -2,13 +2,13 @@ use anyhow::Result;
 use crate::bencoded::BencodeEncoding;
 use crate::peer;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct TorrentFileInfo {
     pub length: usize,
     pub path: Vec<String>
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct TorrentInfo {
     pub name: String,
     pub pieces: Vec<u8>,

@@ -126,10 +126,10 @@ fn main() -> Result<(), anyhow::Error> {
 
             let pieces_to_download: Arc<Mutex<Vec<Piece>>> = Arc::new(Mutex::new(vec![piece]));
             let shared_output_file_path: Arc<String> = Arc::new(output_file_path.to_string());
+            let shared_torrent_info: Arc<TorrentInfo>  = Arc::new(torrent.info.clone());
             for other_peer_address in peer_addresses {
                 let (other_peer_handshake, other_peer_stream) = peer::Peer::handshake_for_peer(&other_peer_address, &torrent.info, &current_peer_id)?;
 
-                let shared_torrent_info: Arc<TorrentInfo>  = Arc::new(torrent.info);
                 //other_peer_stream.set_read_timeout(Some(Duration::new(5, 0)))?;
                 println!("Established connection to peer {:?} peer address {:?}", format::format_as_hex_string(&other_peer_handshake.peer.id), &other_peer_address);
                 let peer_thread = exchange_messages_with_peer(
@@ -141,9 +141,6 @@ fn main() -> Result<(), anyhow::Error> {
                     DownloadMode::Piece
                 )?;
                 peer_threads.insert(other_peer_handshake.peer.clone(), peer_thread);
-                //TODO: comment out the following line. Only connect to the first peer to ease the debugging
-                //Downloading from multiple peers should also work as expected, gracefully terminate the remaining threads
-                break;
             }
             for (_, thread) in peer_threads {
                 thread.join().unwrap();
@@ -173,10 +170,10 @@ fn main() -> Result<(), anyhow::Error> {
 
             let pieces_to_download: Arc<Mutex<Vec<Piece>>> = Arc::new(Mutex::new(all_pieces));
             let shared_output_file_path: Arc<String> = Arc::new(output_file_path.to_string());
+            let shared_torrent_info: Arc<TorrentInfo>  = Arc::new(torrent.info.clone());
             for other_peer_address in peer_addresses {
                 let (other_peer_handshake, other_peer_stream) = peer::Peer::handshake_for_peer(&other_peer_address, &torrent.info, &current_peer_id)?;
 
-                let shared_torrent_info: Arc<TorrentInfo>  = Arc::new(torrent.info);
                 //other_peer_stream.set_read_timeout(Some(Duration::new(5, 0)))?;
                 println!("Established connection to peer {:?} peer address {:?}", format::format_as_hex_string(&other_peer_handshake.peer.id), &other_peer_address);
                 let peer_thread = exchange_messages_with_peer(
@@ -188,9 +185,6 @@ fn main() -> Result<(), anyhow::Error> {
                     DownloadMode::File
                 )?;
                 peer_threads.insert(other_peer_handshake.peer.clone(), peer_thread);
-                //TODO: comment out the following line. Only connect to the first peer to ease the debugging
-                //Downloading from multiple peers should also work as expected, gracefully terminate the remaining threads
-                break;
             }
             //TODO: Once downloading a piece is completed send a "have" message to the peers
             //TODO: Receive an interpret "have" messages from the peers
@@ -261,7 +255,7 @@ fn exchange_messages_with_peer(
             {
                 let pieces = pieces_to_download_per_thread.lock().unwrap();
                 if !downloading_piece && pieces.is_empty() {
-                    println!("Finished downloading the file");
+                    println!("Finished downloading the file from peer {}", format::format_as_hex_string(&peer_in_this_thread.id));
                     break;
                 }
             }
