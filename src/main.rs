@@ -1,5 +1,6 @@
 use std::env;
 use std::io::Write;
+use std::fs::File;
 use std::net::TcpStream;
 use std::thread;
 use std::time::Duration;
@@ -21,6 +22,12 @@ mod peer;
 mod hash;
 mod file;
 
+#[derive(PartialEq)]
+enum DownloadMode {
+    Piece,
+    File
+}
+
 // Usage: your_bittorrent.sh decode "<encoded_value>"
 fn main() -> Result<(), anyhow::Error> {
     let args: Vec<String> = env::args().collect();
@@ -30,7 +37,120 @@ fn main() -> Result<(), anyhow::Error> {
     //let command = "download";
     //let args: Vec<String> = vec!["", "", "-o", "/tmp/test.txt", "sample.torrent"].iter().map(|x| x.to_string()).collect();
 
-    if command == "download" {
+    if command == "decode" {
+        let encoded_value = &args[2];
+        let decoded_value = bencoded::decode_bencoded_from_str(&encoded_value)?.as_json();
+        println!("{}", decoded_value.to_string());
+        Ok(())
+    } else if command == "info" {
+        let torrent_file_path = &args[2];
+        //let torrent_file_path = "sample.torrent";
+        println!("torrent_file_path: {}", torrent_file_path);
+        let torrent_file_bytes = std::fs::read(torrent_file_path)?;
+        let torrent = torrent::Torrent::from_bytes(&torrent_file_bytes)?;
+        println!("Torrent file: {:?}", torrent);
+        println!("Tracker URL: {}", torrent.announce);
+        println!("Length: {}", torrent.info.length.unwrap_or(0));
+        println!("Info Hash: {}", format::format_as_hex_string(&torrent.info.compute_hash()));
+        println!("Piece Length: {}", torrent.info.piece_length);
+        println!("Piece Hashes:");
+        for piece_hash in torrent.info.piece_hashes() {
+            println!("{}", format::format_as_hex_string(piece_hash))
+        }
+        Ok(())
+    } else if command == "peers" {
+        let torrent_file_path = &args[2];
+        //let torrent_file_path = "sample.torrent";
+        println!("torrent_file_path: {}", torrent_file_path);
+        let torrent_file_bytes = std::fs::read(torrent_file_path)?;
+        let torrent = torrent::Torrent::from_bytes(&torrent_file_bytes)?;
+
+        let current_peer_id = peer::random_peer_id();
+        let torrent_hash = torrent.info.compute_hash();
+        let port = 6881;
+        let tracker = tracker::Tracker { url: torrent.announce };
+
+        let request = tracker::TrackerRequest {
+            peer_id: current_peer_id,
+            info_hash: url::url_encode_bytes(&torrent_hash),
+            port,
+            uploaded: 0,
+            downloaded: 0,
+            left: torrent.info.length.unwrap_or(0) as u64,
+            compact: true
+        };
+        let response = tracker.get(&request)?;
+        for peer in response.get_peer_addresses()? {
+            println!("{}:{}", peer.address, peer.port)
+        }
+        Ok(())
+    } else if command == "handshake" {
+        let torrent_file_path = &args[2];
+        let other_peer_address = peer::PeerAddress::from_str(&args[3])?;
+        let torrent_file_bytes = std::fs::read(torrent_file_path)?;
+        let torrent = torrent::Torrent::from_bytes(&torrent_file_bytes)?;
+
+        let current_peer_id = peer::random_peer_id();
+        let torrent_hash = torrent.info.compute_hash();
+
+        let current_peer_handshake = peer::PeerHandshake {
+            info_hash: torrent_hash,
+            peer: peer::Peer {
+                id: current_peer_id.as_bytes().to_vec()
+            }
+        };
+        let (other_peer_handshake, _) = peer::Peer::handshake(&other_peer_address, &current_peer_handshake)?;
+        println!("Peer ID: {}", format::format_as_hex_string(&other_peer_handshake.peer.id));
+        Ok(())
+    } else if command == "download_piece" {
+        let option = &args[2];
+        if option != "-o" {
+            Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Unexpected arguments, did not find -o, {:?}", &args)).into())
+        } else {
+            let output_file_path = &args[3];
+            let torrent_file_path = &args[4];
+            let piece_index = args[5].parse::<u32>()?;
+            println!("Downloading piece {:?} from torrent {:?} to file {:?}", piece_index, torrent_file_path, output_file_path);
+
+            let torrent = torrent::Torrent::parse_torrent(torrent_file_path)?;
+            let current_peer_id = peer::random_peer_id();
+            let port = 6881;
+            let peer_addresses = tracker::Tracker::join_swarm(&current_peer_id, port,&torrent)?;
+            let mut peer_threads: HashMap<Peer, JoinHandle<i32>> = HashMap::new();
+
+            let piece_length_to_download = torrent.info.piece_length_at_index(piece_index as u32)?;
+            let piece = peer::Piece {
+                index: piece_index as u32,
+                piece_length: piece_length_to_download
+            };
+
+            let pieces_to_download: Arc<Mutex<Vec<Piece>>> = Arc::new(Mutex::new(vec![piece]));
+            let shared_output_file_path: Arc<String> = Arc::new(output_file_path.to_string());
+            for other_peer_address in peer_addresses {
+                let (other_peer_handshake, other_peer_stream) = peer::Peer::handshake_for_peer(&other_peer_address, &torrent.info, &current_peer_id)?;
+
+                let shared_torrent_info: Arc<TorrentInfo>  = Arc::new(torrent.info);
+                //other_peer_stream.set_read_timeout(Some(Duration::new(5, 0)))?;
+                println!("Established connection to peer {:?} peer address {:?}", format::format_as_hex_string(&other_peer_handshake.peer.id), &other_peer_address);
+                let peer_thread = exchange_messages_with_peer(
+                    &pieces_to_download,
+                    &shared_output_file_path,
+                    &shared_torrent_info,
+                    &other_peer_handshake.peer,
+                    other_peer_stream,
+                    DownloadMode::Piece
+                )?;
+                peer_threads.insert(other_peer_handshake.peer.clone(), peer_thread);
+                //TODO: comment out the following line. Only connect to the first peer to ease the debugging
+                //Downloading from multiple peers should also work as expected, gracefully terminate the remaining threads
+                break;
+            }
+            for (_, thread) in peer_threads {
+                thread.join().unwrap();
+            }
+            Ok(())
+        }
+    } else if command == "download" {
         let option = &args[2];
         if option != "-o" {
             Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Unexpected arguments, did not find -o, {:?}", &args)).into())
@@ -64,7 +184,8 @@ fn main() -> Result<(), anyhow::Error> {
                     &shared_output_file_path,
                     &shared_torrent_info,
                     &other_peer_handshake.peer,
-                    other_peer_stream
+                    other_peer_stream,
+                    DownloadMode::File
                 )?;
                 peer_threads.insert(other_peer_handshake.peer.clone(), peer_thread);
                 //TODO: comment out the following line. Only connect to the first peer to ease the debugging
@@ -91,7 +212,8 @@ fn exchange_messages_with_peer(
         output_file_path: &Arc<String>,
         torrent_info: &Arc<TorrentInfo>,
         peer: &peer::Peer,
-        mut peer_stream: TcpStream) -> Result<JoinHandle<i32>, anyhow::Error> {
+        mut peer_stream: TcpStream,
+        download_mode: DownloadMode) -> Result<JoinHandle<i32>, anyhow::Error> {
     const MAXIMUM_CONCURRENT_REQUEST_COUNT: usize = 5;
 
     let pieces_to_download_per_thread = Arc::clone(pieces_to_download);
@@ -215,9 +337,14 @@ fn exchange_messages_with_peer(
                                 println!("Computed hash: {}", format::format_as_hex_string(&computed_piece_hash));
                                 if expected_piece_hash == computed_piece_hash {
                                     println!("Piece {} downloaded to {}.", piece.index, output_file_path_per_thread);
-                                    let begin_in_file = torrent_info_per_thread.piece_length * (piece.index as usize);
-                                    file::write_piece_to(&output_file_path_per_thread.as_str(), begin_in_file, ready_piece_blocks.as_slice());
                                     //Finished downloading the piece and is ready to pick up the next piece
+                                    if download_mode == DownloadMode::File {
+                                        let begin_in_file = torrent_info_per_thread.piece_length * (piece.index as usize);
+                                        file::write_piece_to(&output_file_path_per_thread.as_str(), begin_in_file, ready_piece_blocks.as_slice()).unwrap();
+                                    } else {
+                                        let mut file = File::create(output_file_path_per_thread.as_str()).unwrap();
+                                        file.write_all(ready_piece_blocks.as_slice()).unwrap();
+                                    }
                                     downloading_piece = false;
                                 } else {
                                     //Restarting the download of the piece from scratch: something went wrong
