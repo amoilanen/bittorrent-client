@@ -1,3 +1,4 @@
+use std::env;
 use std::io::Write;
 use std::net::TcpStream;
 use std::thread;
@@ -22,10 +23,10 @@ mod file;
 
 // Usage: your_bittorrent.sh decode "<encoded_value>"
 fn main() -> Result<(), anyhow::Error> {
-    //let args: Vec<String> = env::args().collect();
-    //let command = &args[1];
-    let command = "download_piece";
-    let args: Vec<String> = vec!["", "", "-o", "/tmp/test-piece-0", "sample.torrent", "0"].iter().map(|x| x.to_string()).collect();
+    let args: Vec<String> = env::args().collect();
+    let command = &args[1];
+    //let command = "download_piece";
+    //let args: Vec<String> = vec!["", "", "-o", "/tmp/test-piece-0", "sample.torrent", "0"].iter().map(|x| x.to_string()).collect();
     //let command = "download";
     //let args: Vec<String> = vec!["", "", "-o", "/tmp/test.txt", "sample.torrent"].iter().map(|x| x.to_string()).collect();
 
@@ -46,7 +47,7 @@ fn main() -> Result<(), anyhow::Error> {
 
             let all_pieces: Vec<Piece> = torrent.info.get_all_pieces();
             if !Path::new(output_file_path).exists() {
-                file::touch_and_fill_with_zeros(&output_file_path, torrent.info.length.unwrap_or(0));
+                file::touch_and_fill_with_zeros(&output_file_path, torrent.info.length.unwrap_or(0))?;
             }
             //TODO: Decide which pieces are missing and still need to be downloaded by checking the hashes of the pieces of the file which has been downloaded so far
 
@@ -70,8 +71,6 @@ fn main() -> Result<(), anyhow::Error> {
                 //Downloading from multiple peers should also work as expected, gracefully terminate the remaining threads
                 break;
             }
-            //TODO: Download a piece from the peer only if the peer has it according to the bitfield message
-            //TODO: Download pieces for the whole file in the random order
             //TODO: Once downloading a piece is completed send a "have" message to the peers
             //TODO: Receive an interpret "have" messages from the peers
             //TODO: Re-factor and extract the function(s) for downloading the piece to the "peer" module
@@ -140,6 +139,7 @@ fn exchange_messages_with_peer(
             {
                 let pieces = pieces_to_download_per_thread.lock().unwrap();
                 if !downloading_piece && pieces.is_empty() {
+                    println!("Finished downloading the file");
                     break;
                 }
             }
@@ -232,8 +232,7 @@ fn exchange_messages_with_peer(
                     }
                 }
             }
-            //TODO: Periodically reset the BlockState::Requested state of the blocks to Absent to allow them to be requested from other peers: in case
-            //download is taking too much or the peer did not respond with a block
+            //TODO: In case download is taking too much or the peer did not respond with the blocks of the piece, return the piece to the queue
             sending = !sending;
             let sleep_duration = Duration::from_millis(100);
             thread::sleep(sleep_duration);
