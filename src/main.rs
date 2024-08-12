@@ -17,7 +17,7 @@ mod bencoded;
 mod torrent;
 mod format;
 mod tracker;
-mod url;
+mod url_utils;
 mod peer;
 mod hash;
 mod file;
@@ -30,8 +30,10 @@ enum DownloadMode {
 
 // Usage: your_bittorrent.sh decode "<encoded_value>"
 fn main() -> Result<(), anyhow::Error> {
-    let args: Vec<String> = env::args().collect();
-    let command = &args[1];
+    //let args: Vec<String> = env::args().collect();
+    //let command = &args[1];
+    let command = "peers";
+    let args: Vec<String> = vec!["", "", "big-buck-bunny.torrent"].iter().map(|x| x.to_string()).collect();
     //let command = "download_piece";
     //let args: Vec<String> = vec!["", "", "-o", "/tmp/test-piece-0", "sample.torrent", "0"].iter().map(|x| x.to_string()).collect();
     //let command = "download";
@@ -72,7 +74,7 @@ fn main() -> Result<(), anyhow::Error> {
 
         let request = tracker::TrackerRequest {
             peer_id: current_peer_id,
-            info_hash: url::url_encode_bytes(&torrent_hash),
+            info_hash: url_utils::url_encode_bytes(&torrent_hash),
             port,
             uploaded: 0,
             downloaded: 0,

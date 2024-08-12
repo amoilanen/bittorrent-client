@@ -1,9 +1,11 @@
+use std::net::UdpSocket;
 use std::net::{ Ipv4Addr, IpAddr };
 use crate::bencoded;
 use crate::torrent;
 use crate::tracker;
 use crate::peer;
-use crate::url;
+use crate::url_utils;
+use url::Url;
 
 pub(crate) struct TrackerResponse {
     interval: u32,
@@ -46,7 +48,7 @@ impl Tracker {
     
         let request = tracker::TrackerRequest {
             peer_id: current_peer_id.to_string(),
-            info_hash: url::url_encode_bytes(&torrent_hash),
+            info_hash: url_utils::url_encode_bytes(&torrent_hash),
             port,
             uploaded: 0,
             downloaded: 0,
@@ -58,6 +60,28 @@ impl Tracker {
     }
 
     pub(crate) fn get(&self, request: &TrackerRequest) -> Result<TrackerResponse, anyhow::Error> {
+        if self.url.starts_with("http") {
+            self.get_http(request)
+        } else if self.url.starts_with("udp") {
+            self.get_udp(request)
+        } else {
+            Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Unknown URL scheme, only HTTP and UDP are supported, {:?}", self.url)).into())
+        }
+    }
+
+    fn get_udp(&self, request: &TrackerRequest) -> Result<TrackerResponse, anyhow::Error> {
+        let socket = UdpSocket::bind("0.0.0.0:0")?;
+        let tracker_url = Url::parse(&self.url)?;
+
+        //Following the spec https://www.bittorrent.org/beps/bep_0015.html
+        //TODO: Send the "connect" request
+        //TODO: Receive the response from the "connect" request, read and store the connection_id
+        //TODO: Send the "announce" request
+        //TODO: Receive the "announce" response and parse the list of peers from its bytes
+        Err(std::io::Error::new(std::io::ErrorKind::Other, format!("UDP support is not implemented, url = {}", self.url)).into())
+    }
+
+    fn get_http(&self, request: &TrackerRequest) -> Result<TrackerResponse, anyhow::Error> {
         let client = reqwest::blocking::Client::new();
         let rest_of_params = [
             ("peer_id", request.peer_id.to_string()),

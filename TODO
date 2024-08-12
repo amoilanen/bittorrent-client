@@ -1,3 +1,5 @@
+-- Send "announce" to the UDP tracker
+
 -- Initialize the file to be downloaded with all zeros in the local filesystem, once a piece is downloaded update the corresponding file part in the local file system
    -- Keep the metainformation which blocks were already downloaded and which not in a separate file (based on the this file the "bitfield" message should be sent to peers when connecting to them)
 
