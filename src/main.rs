@@ -21,6 +21,7 @@ mod url_utils;
 mod peer;
 mod hash;
 mod file;
+mod error;
 
 #[derive(PartialEq)]
 enum DownloadMode {

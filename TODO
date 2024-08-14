@@ -40,3 +40,5 @@
 
 -- Test scenario: two peers one of which has first half of the file and the second the second half of the file
 -- Test scenario: one of the peers sends intermittent choke/unchoke messages
+
+-- Support sending "scrape" requests to the UDP supporting tracker and parsing its response

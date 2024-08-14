@@ -1,11 +1,15 @@
 use std::net::UdpSocket;
+use std::net::SocketAddr;
 use std::net::{ Ipv4Addr, IpAddr };
 use crate::bencoded;
 use crate::torrent;
 use crate::tracker;
 use crate::peer;
 use crate::url_utils;
+use crate::error::new_error;
 use url::Url;
+
+mod messages;
 
 pub(crate) struct TrackerResponse {
     interval: u32,
@@ -72,6 +76,12 @@ impl Tracker {
     fn get_udp(&self, request: &TrackerRequest) -> Result<TrackerResponse, anyhow::Error> {
         let socket = UdpSocket::bind("0.0.0.0:0")?;
         let tracker_url = Url::parse(&self.url)?;
+        let tracker_address: SocketAddr = format!("{}:{}",
+            tracker_url.host_str().ok_or(new_error(format!("Could not parse host from url {}", tracker_url)))?,
+            tracker_url.port().ok_or(new_error(format!("Could not parse port from url {}", tracker_url)))?
+        ).parse()?;
+
+        let transaction_id = rand::random::<u32>();
 
         //Following the spec https://www.bittorrent.org/beps/bep_0015.html
         //TODO: Send the "connect" request
