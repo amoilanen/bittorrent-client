@@ -1,12 +1,14 @@
 use std::net::UdpSocket;
-use std::net::SocketAddr;
-use std::net::{ Ipv4Addr, IpAddr };
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::str::FromStr;
 use crate::bencoded;
 use crate::torrent;
 use crate::tracker;
 use crate::peer;
 use crate::url_utils;
 use crate::error::new_error;
+use messages::ConnectRequest;
+use messages::ConnectResponse;
 use url::Url;
 
 mod messages;
@@ -76,12 +78,27 @@ impl Tracker {
     fn get_udp(&self, request: &TrackerRequest) -> Result<TrackerResponse, anyhow::Error> {
         let socket = UdpSocket::bind("0.0.0.0:0")?;
         let tracker_url = Url::parse(&self.url)?;
-        let tracker_address: SocketAddr = format!("{}:{}",
-            tracker_url.host_str().ok_or(new_error(format!("Could not parse host from url {}", tracker_url)))?,
-            tracker_url.port().ok_or(new_error(format!("Could not parse port from url {}", tracker_url)))?
-        ).parse()?;
 
+        let tracker_host = tracker_url.host_str().ok_or(new_error(format!("Could not parse host from url {}", tracker_url)))?;
+        let tracker_port: u16 = tracker_url.port().ok_or(new_error(format!("Could not parse port from url {}", tracker_url)))?;
+        let tracker_address: SocketAddr = SocketAddr::new(IpAddr::from_str(tracker_host)?, tracker_port);
+
+        println!("tracker_address = {}", tracker_address);
         let transaction_id = rand::random::<u32>();
+
+        let connect_request = ConnectRequest::new(transaction_id);
+        socket.send_to(&connect_request.get_bytes(), tracker_address)?;
+        println!("Sent 'connect' request {:?}", connect_request);
+
+        let mut response_buffer = [0u8; 1024];
+
+        //TODO: Handle the situation if the server does not respond/timeout
+        socket.recv(&mut response_buffer)?;
+
+        let connect_response = ConnectResponse::parse(&response_buffer)?;
+        println!("Received 'connect' response {:?}", connect_response);
+        //TODO: Check that the transaction id matches in the request and response
+        let connection_id = connect_response.connection_id;
 
         //Following the spec https://www.bittorrent.org/beps/bep_0015.html
         //TODO: Send the "connect" request
