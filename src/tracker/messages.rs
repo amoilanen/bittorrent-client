@@ -32,8 +32,8 @@ impl ConnectRequest {
 
     pub(crate) fn new(transaction_id: u32) -> ConnectRequest {
         ConnectRequest {
-            protocol_id: 0x41727101980,
-            action: Action::Announce,
+            protocol_id: 0x41727101980u64,
+            action: Action::Connect,
             transaction_id
         }
     }
