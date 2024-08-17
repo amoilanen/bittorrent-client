@@ -42,3 +42,5 @@
 -- Test scenario: one of the peers sends intermittent choke/unchoke messages
 
 -- Support sending "scrape" requests to the UDP supporting tracker and parsing its response
+
+-- Implement the DHT protocol support for discovering peers

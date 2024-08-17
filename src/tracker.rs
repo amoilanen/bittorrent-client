@@ -50,6 +50,7 @@ impl Tracker {
 
     pub(crate) fn join_swarm(current_peer_id: &str, port: usize, torrent: &torrent::Torrent) -> Result<Vec<peer::PeerAddress>, anyhow::Error> {
         let torrent_hash = torrent.info.compute_hash();
+        //TODO: Some trackers might refuse "Connect" requests or be offline, try several trackers associated with the torrent and find the one which works
         let tracker = tracker::Tracker { url: torrent.announce.clone() };
     
         let request = tracker::TrackerRequest {
@@ -76,6 +77,7 @@ impl Tracker {
     }
 
     fn get_udp(&self, request: &TrackerRequest) -> Result<TrackerResponse, anyhow::Error> {
+        //TODO: Some trackers just do not respond to the UDP "Connect" request, return an Error in this case
         let socket: UdpSocket = UdpSocket::bind("0.0.0.0:6969")?;
         socket.set_read_timeout(Some(Duration::new(2, 0)))?;
 
@@ -167,7 +169,8 @@ mod tests {
 
     #[test]
     fn should_send_connect_request_and_receive_connect_response() {
-        let tracker_url = "udp://tracker.coppersurfer.tk:6969";
+        //This tracker responds to the connection request as expected (as debugged with Wireshark and local Transmission)
+        let tracker_url = "udp://93.158.213.92:1337";
         let tracker = Tracker {
             //url: "udp://tracker.openbittorrent.com:80/announce".to_string(),
             //url: "udp://tracker.coppersurfer.tk:6969".to_string(),
