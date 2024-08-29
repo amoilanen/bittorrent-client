@@ -1,7 +1,8 @@
 // Following https://www.bittorrent.org/beps/bep_0015.html
 use crate::error::new_error;
+use anyhow::ensure;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum Action {
     Connect = 0,
     Announce = 1,
@@ -23,9 +24,9 @@ impl Action {
 
 #[derive(Debug)]
 pub(crate) struct ConnectRequest {
-    protocol_id: u64,
-    action: Action,
-    transaction_id: u32
+    pub(crate) protocol_id: u64,
+    pub(crate) action: Action,
+    pub(crate) transaction_id: u32
 }
 
 impl ConnectRequest {
@@ -57,8 +58,8 @@ pub(crate) struct ConnectResponse {
 impl ConnectResponse {
     pub(crate) fn parse(bytes: &[u8]) -> Result<ConnectResponse, anyhow::Error> {
         let message_bytes: [u8; 16] = bytes[0..16].try_into()?;
-        //TODO: Assert that action is Action::Connect
         let action: Action = Action::from(u32::from_be_bytes(message_bytes[0..4].try_into()?))?;
+        ensure!(action == Action::Connect, "Expected 'connect' action 0 but got {:?}", action);
         let transaction_id: u32 = u32::from_be_bytes(message_bytes[4..8].try_into()?);
         let connection_id: u64 = u64::from_be_bytes(message_bytes[8..16].try_into()?);
         Ok(ConnectResponse {

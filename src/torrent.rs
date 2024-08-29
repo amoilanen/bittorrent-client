@@ -79,6 +79,7 @@ impl TorrentInfo {
 #[derive(Debug, PartialEq)]
 pub struct Torrent {
     pub announce: String,
+    //TODO: Also parse the announce-list, as all the trackers from that list can be contacted
     pub info: TorrentInfo
 }
 

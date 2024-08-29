@@ -1,6 +1,7 @@
 use std::net::UdpSocket;
 use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs, SocketAddr};
 use std::time::Duration;
+use anyhow::ensure;
 use crate::bencoded;
 use crate::torrent;
 use crate::tracker;
@@ -62,26 +63,27 @@ impl Tracker {
             left: torrent.info.length.unwrap_or(0) as u64,
             compact: true
         };
-        let response = tracker.get(&request)?;
+        //TODO: Go over the list of announce-list and try getting peer addresses from every of the listed servers if announce-list is present
+        let response = tracker.get(&tracker.url, &request)?;
         response.get_peer_addresses()
     }
 
-    pub(crate) fn get(&self, request: &TrackerRequest) -> Result<TrackerResponse, anyhow::Error> {
+    pub(crate) fn get(&self, url: &str, request: &TrackerRequest) -> Result<TrackerResponse, anyhow::Error> {
         if self.url.starts_with("http") {
-            self.get_http(request)
+            self.get_http(url, request)
         } else if self.url.starts_with("udp") {
-            self.get_udp(request)
+            self.get_udp(url, request)
         } else {
             Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Unknown URL scheme, only HTTP and UDP are supported, {:?}", self.url)).into())
         }
     }
 
-    fn get_udp(&self, request: &TrackerRequest) -> Result<TrackerResponse, anyhow::Error> {
+    fn get_udp(&self, url: &str, request: &TrackerRequest) -> Result<TrackerResponse, anyhow::Error> {
         //TODO: Some trackers just do not respond to the UDP "Connect" request, return an Error in this case
         let socket: UdpSocket = UdpSocket::bind("0.0.0.0:6969")?;
         socket.set_read_timeout(Some(Duration::new(2, 0)))?;
 
-        let tracker_url = Url::parse(&self.url)?;
+        let tracker_url = Url::parse(url)?;
 
         let tracker_host = tracker_url.host_str().ok_or(new_error(format!("Could not parse host from url {}", tracker_url)))?;
         let tracker_port: u16 = tracker_url.port().ok_or(new_error(format!("Could not parse port from url {}", tracker_url)))?;
@@ -90,34 +92,36 @@ impl Tracker {
             .ok_or(new_error(format!("Could not resolve as SocketAddr {}", tracker_url)))?;
 
         println!("tracker_address = {}", tracker_address);
-        let transaction_id = rand::random::<u32>();
 
-        let connect_request = ConnectRequest::new(transaction_id);
+        let connect_request = ConnectRequest::new(rand::random::<u32>());
         let bytes_sent = socket.send_to(&connect_request.get_bytes(), tracker_address)?;
         println!("Sent 'connect' request {:?}, bytes sent = {}", connect_request, bytes_sent);
 
         let mut response_buf: [u8; 16] = [0; 16];
-
-        let max_connect_attempts = 5;
+        let max_connect_response_connect_attempts = 5;
         let mut current_connect_attempt = 1;
-        let mut connected_successfully = false;
-        while !connected_successfully && current_connect_attempt <= max_connect_attempts {
-            //TODO: Handle the situation if the server does not respond/timeout
+        let mut received_connect_response = false;
+        while !received_connect_response && current_connect_attempt <= max_connect_response_connect_attempts {
             match socket.recv_from(&mut response_buf) {
                 Ok((bytes_read, _)) => {
                     println!("Received {} bytes in Connect responst", bytes_read);
-                    connected_successfully = true;
+                    received_connect_response = true;
                 }
                 Err(_) => {
                     println!("Will try to connect again, failed so far... UDP tracker {}", &self.url);
-                    //socket.send_to(&connect_request.get_bytes(), tracker_address)?;
+                    socket.send_to(&connect_request.get_bytes(), tracker_address)?;
                     current_connect_attempt = current_connect_attempt + 1;
                 }
             };
         }
-        if connected_successfully {
+        if received_connect_response {
             let connect_response = ConnectResponse::parse(&response_buf)?;
             println!("Received 'connect' response {:?}", connect_response);
+            ensure!(connect_response.transaction_id == connect_request.transaction_id,
+                "transaction_id in 'connect' request was {}, transaction_id in 'connect' response was {}, they should match but did not",
+                connect_request.transaction_id,
+                connect_response.transaction_id
+            );
             //TODO: Check that the transaction id matches in the request and response
             let connection_id = connect_response.connection_id;
         } else {
@@ -132,7 +136,7 @@ impl Tracker {
         Err(std::io::Error::new(std::io::ErrorKind::Other, format!("UDP support is not yet implemented, url = {}", self.url)).into())
     }
 
-    fn get_http(&self, request: &TrackerRequest) -> Result<TrackerResponse, anyhow::Error> {
+    fn get_http(&self, url: &str, request: &TrackerRequest) -> Result<TrackerResponse, anyhow::Error> {
         let client = reqwest::blocking::Client::new();
         let rest_of_params = [
             ("peer_id", request.peer_id.to_string()),
@@ -143,7 +147,7 @@ impl Tracker {
             ("compact", (if request.compact { "1" } else { "0" }).to_string())
         ];
         let url_encoded_rest_of_params = serde_urlencoded::to_string(rest_of_params)?;
-        let url_with_params = format!("{}?{}&info_hash={}", self.url, url_encoded_rest_of_params, request.info_hash);
+        let url_with_params = format!("{}?{}&info_hash={}", url, url_encoded_rest_of_params, request.info_hash);
         let response = client.get(url_with_params)
             .send()?;
 
@@ -186,6 +190,6 @@ mod tests {
             left: 9999,
             compact: true
         };
-        let response = tracker.get_udp(&tracker_request).unwrap();
+        let response = tracker.get_udp(&tracker.url,&tracker_request).unwrap();
     }
 }

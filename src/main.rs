@@ -82,7 +82,7 @@ fn main() -> Result<(), anyhow::Error> {
             left: torrent.info.length.unwrap_or(0) as u64,
             compact: true
         };
-        let response = tracker.get(&request)?;
+        let response = tracker.get(&tracker.url, &request)?;
         for peer in response.get_peer_addresses()? {
             println!("{}:{}", peer.address, peer.port)
         }
